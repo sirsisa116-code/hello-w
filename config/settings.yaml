@@ -1,0 +1,63 @@
+# ===== 基本設定 =====
+# このファイルを書き換えると、ツールの動きを変えられます。
+# 「#」から後ろはメモ（コメント）で、プログラムは読みません。
+
+# --- 対象銘柄 ---
+universe:
+  # watchlist: 下の watchlist に書いた銘柄だけを対象にする（開発中はこちら）
+  # prime:     東証プライム市場の銘柄から選ぶ（本番用）
+  mode: watchlist
+
+  # mode: prime のときだけ使う。JPXの「規模区分」で絞り込む。
+  # 空のリスト [] にすると、プライム全銘柄（約1,600）が対象になる。
+  # 例: TOPIX500 相当 → [TOPIX Core30, TOPIX Large70, TOPIX Mid400]
+  prime_scales: [TOPIX Core30, TOPIX Large70, TOPIX Mid400]
+
+  # 開発用の監視銘柄（コード: 銘柄名）
+  watchlist:
+    "7203": トヨタ自動車
+    "6758": ソニーグループ
+    "9984": ソフトバンクグループ
+    "8306": 三菱UFJフィナンシャル・グループ
+    "6861": キーエンス
+    "8035": 東京エレクトロン
+    "9432": 日本電信電話
+    "6098": リクルートホールディングス
+    "4063": 信越化学工業
+    "9983": ファーストリテイリング
+    "7974": 任天堂
+    "8058": 三菱商事
+    "6501": 日立製作所
+    "4502": 武田薬品工業
+    "6367": ダイキン工業
+    "7267": 本田技研工業
+    "8316": 三井住友フィナンシャルグループ
+    "6902": デンソー
+    "4568": 第一三共
+    "6273": SMC
+
+# --- 比較用の指数（TOPIX連動ETF）---
+benchmark:
+  code: "1306"
+  name: NEXT FUNDS TOPIX連動型上場投信
+
+# --- データ源 ---
+sources:
+  jpx_list_url: https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls
+  stooq_url: https://stooq.com/q/d/l/
+
+# --- 株価取得 ---
+prices:
+  history_days: 500        # 初回に取りに行く日数（カレンダー日）
+  overlap_days: 10         # 2回目以降、手元のデータと重ねて取り直す日数
+  chunk_size: 50           # yfinance に一度に問い合わせる銘柄数
+  pause_seconds: 1.0       # 問い合わせの間の待ち時間（相手に負荷をかけないため）
+  market_close_jst: "16:00"  # これより前に実行したら、当日分は未確定として捨てる
+  min_history_rows: 80     # これより短い銘柄は「履歴不足」と警告する
+  max_stale_days: 5        # 最新データが今日よりこの日数以上古ければ警告する
+
+# --- 保存先（このフォルダからの相対パス）---
+paths:
+  raw_prices: data/raw/prices
+  jpx_list: data/raw/jpx_list.xls
+  daily_output: output/daily

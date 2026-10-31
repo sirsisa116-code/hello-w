@@ -1,0 +1,9 @@
+# 取得データと出力（個人のデータなのでGitに入れない）
+data/
+output/
+
+# Python が自動で作るファイル
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
