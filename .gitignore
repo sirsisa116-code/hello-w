@@ -1,6 +1,6 @@
 # 取得データと出力（個人のデータなのでGitに入れない）
-data/
-output/
+/data/
+/output/
 
 # Python が自動で作るファイル
 __pycache__/
