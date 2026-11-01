@@ -52,7 +52,7 @@ hello-w/
 ├── docs/design.md           この設計書
 ├── config/
 │   ├── settings.yaml        対象銘柄、データ源、保存先
-│   ├── weights.yaml         スコアの重み（段階2で追加）
+│   ├── weights.yaml         スコアの重みと点数ルール
 │   └── news_criteria.yaml   ニュース判定の固定基準（段階5で追加）
 ├── src/kabu/
 │   ├── config.py            設定ファイルの読み込み
@@ -63,7 +63,8 @@ hello-w/
 │   │   ├── fundamentals.py  EDINET（段階4）
 │   │   ├── news.py          RSS・TDnet（段階5）
 │   │   └── broker_csv.py    SBI CSV（段階6）
-│   ├── analysis/            計算する係（ネットにつながない）（段階2〜）
+│   ├── analysis/            計算する係（ネットにつながない）
+│   │   └── technical.py     テクニカル指標
 │   ├── scoring.py           合算と根拠の記録（段階2）
 │   ├── report.py            CSV・レポート出力（段階2）
 │   └── backtest/            段階7
@@ -116,7 +117,7 @@ hello-w/
 | 段階 | 内容 | 状態 |
 |---|---|---|
 | 1 | 設定ファイル、銘柄一覧、株価取得、欠損記録 | 実装済み |
-| 2 | テクニカル指標とスコア化、CSV・レポート出力、履歴の蓄積 | 未着手 |
+| 2 | テクニカル指標とスコア化、CSV・レポート出力、履歴の蓄積 | 実装済み |
 | 3 | 事後検証（1・5・10・20営業日後の騰落率を TOPIX と比較） | 未着手 |
 | 4 | ファンダメンタル（EDINET） | 未着手 |
 | 5 | ニュース収集と判定の受け渡し | 未着手 |

@@ -63,3 +63,8 @@ paths:
   raw_prices: data/raw/prices
   jpx_list: data/raw/jpx_list.xlsx
   daily_output: output/daily
+  history: output/history.csv
+
+# --- レポート ---
+report:
+  top_n: 10                # レポートに詳しく載せる上位の銘柄数（CSV には全銘柄が入る）
