@@ -1,9 +1,33 @@
 """銘柄一覧と品質ログのテスト（ネットにはつながない）。"""
 
 import pandas as pd
+import pytest
 
-from kabu.data.universe import normalize_code, parse_jpx_list, select_prime
+from kabu.data.universe import (
+    JpxLinkNotFound,
+    find_jpx_list_link,
+    normalize_code,
+    parse_jpx_list,
+    select_prime,
+)
 from kabu.quality import QualityLog
+
+PAGE = "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
+
+
+def test_find_jpx_list_link_relative():
+    html = '<a href="/markets/statistics-equities/misc/abc-att/data_j.xls">東証上場銘柄一覧</a>'
+    assert find_jpx_list_link(html, PAGE) == "https://www.jpx.co.jp/markets/statistics-equities/misc/abc-att/data_j.xls"
+
+
+def test_find_jpx_list_link_xlsx():
+    html = '<a href="xyz-att/data_j.xlsx">一覧</a>'
+    assert find_jpx_list_link(html, PAGE) == "https://www.jpx.co.jp/markets/statistics-equities/misc/xyz-att/data_j.xlsx"
+
+
+def test_find_jpx_list_link_missing():
+    with pytest.raises(JpxLinkNotFound):
+        find_jpx_list_link("<html>リンクなし</html>", PAGE)
 
 
 def test_normalize_code():

@@ -43,7 +43,9 @@ benchmark:
 
 # --- データ源 ---
 sources:
-  jpx_list_url: https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls
+  # JPX「東証上場銘柄一覧」の案内ページ。ファイルの URL は時々変わるので、
+  # このページに載っているリンクを毎回たどってダウンロードする。
+  jpx_list_page: https://www.jpx.co.jp/markets/statistics-equities/misc/01.html
   stooq_url: https://stooq.com/q/d/l/
 
 # --- 株価取得 ---

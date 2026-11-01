@@ -3,12 +3,15 @@
 - watchlist モード: settings.yaml に書いた銘柄をそのまま使う
 - prime モード:     JPX の「東証上場銘柄一覧」からプライム市場の銘柄を選ぶ
 
-JPX の一覧は月1回更新の Excel（.xls）。毎回ダウンロードせず手元に保存しておき、
+JPX の一覧は月1回更新の Excel。毎回ダウンロードせず手元に保存しておき、
 ダウンロードに失敗したら手元の古いファイルを使う（そのことは品質ログに残す）。
+ファイルの URL は JPX 側で変わることがあるので、案内ページからリンクを探して取る。
 """
 
+import re
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urljoin
 
 import pandas as pd
 import requests
@@ -60,8 +63,8 @@ def load_jpx_list(settings: dict, quality: QualityLog) -> pd.DataFrame | None:
 
     if age_days is None or age_days >= JPX_REFRESH_DAYS:
         try:
-            _download(settings["sources"]["jpx_list_url"], path)
-        except requests.RequestException as e:
+            _download_jpx_list(settings["sources"]["jpx_list_page"], path)
+        except (requests.RequestException, JpxLinkNotFound) as e:
             if age_days is None:
                 quality.error(SOURCE, "", f"JPX銘柄一覧をダウンロードできず、手元にもありません: {e}")
                 return None
@@ -74,10 +77,28 @@ def load_jpx_list(settings: dict, quality: QualityLog) -> pd.DataFrame | None:
         return None
 
 
-def _download(url: str, path: Path) -> None:
-    response = requests.get(url, timeout=30)
+class JpxLinkNotFound(Exception):
+    """案内ページに銘柄一覧ファイルへのリンクが見つからなかった。"""
+
+
+def find_jpx_list_link(html: str, page_url: str) -> str:
+    """案内ページの HTML から data_j.xls（または .xlsx）へのリンクを探し、完全な URL にして返す。"""
+    match = re.search(r'href="([^"]*data_j\.xlsx?)"', html)
+    if match is None:
+        raise JpxLinkNotFound(f"{page_url} に銘柄一覧ファイルへのリンクが見つかりません（ページの作りが変わった可能性）")
+    return urljoin(page_url, match.group(1))
+
+
+def _download_jpx_list(page_url: str, path: Path) -> None:
+    page = requests.get(page_url, timeout=30)
+    page.raise_for_status()
+    page.encoding = page.apparent_encoding
+    file_url = find_jpx_list_link(page.text, page_url)
+
+    response = requests.get(file_url, timeout=30)
     response.raise_for_status()
     path.parent.mkdir(parents=True, exist_ok=True)
+    # 拡張子が .xls でも .xlsx でも、pandas は中身を見て読み分けるので保存名は固定でよい
     path.write_bytes(response.content)
 
 
