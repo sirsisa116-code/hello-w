@@ -96,7 +96,10 @@ def _download_jpx_list(page_url: str, path: Path) -> None:
     file_url = find_jpx_list_link(page.text, page_url)
 
     response = requests.get(file_url, timeout=30)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as e:
+        raise requests.HTTPError(f"案内ページで見つけたリンクが開けません（{file_url}）: {e}") from e
     path.parent.mkdir(parents=True, exist_ok=True)
     # 拡張子が .xls でも .xlsx でも、pandas は中身を見て読み分けるので保存名は固定でよい
     path.write_bytes(response.content)
