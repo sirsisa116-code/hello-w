@@ -18,7 +18,7 @@
 | 実行環境 | Windows PC |
 | 対象銘柄 | 開発中は20銘柄程度。本番はプライム市場＋売買代金の下限で絞る |
 | TDnet 適時開示 | 使う（非公式 WebAPI 経由） |
-| ライブラリ | yfinance / feedparser / xlrd / pytest を追加。anthropic は (c) では不要なので入れない（(a) に切り替えるときに追加） |
+| ライブラリ | yfinance / feedparser / openpyxl / pytest を追加（JPX一覧が .xlsx になったため xlrd は外した）。anthropic は (c) では不要なので入れない（(a) に切り替えるときに追加） |
 
 ## 3. 制約（あらかじめ分かっている弱点）
 
@@ -32,7 +32,7 @@
 
 | 用途 | 第一候補 | 予備・補足 |
 |---|---|---|
-| 銘柄一覧 | JPX「東証上場銘柄一覧」(data_j.xls) | J-Quants 無料プラン |
+| 銘柄一覧 | JPX「東証上場銘柄一覧」(data_j.xlsx。URLは案内ページからたどる) | J-Quants 無料プラン |
 | 日足株価 | yfinance (`7203.T`) | Stooq CSV (`7203.jp`) |
 | 決算データ | EDINET API v2（APIキー要登録・無料） | J-Quants 無料プラン（約12週遅延） |
 | ニュース | Google ニュース RSS（社名検索）、NHK 経済 RSS | — |

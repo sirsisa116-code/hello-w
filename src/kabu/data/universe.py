@@ -101,7 +101,7 @@ def _download_jpx_list(page_url: str, path: Path) -> None:
     except requests.HTTPError as e:
         raise requests.HTTPError(f"案内ページで見つけたリンクが開けません（{file_url}）: {e}") from e
     path.parent.mkdir(parents=True, exist_ok=True)
-    # 拡張子が .xls でも .xlsx でも、pandas は中身を見て読み分けるので保存名は固定でよい
+    # 拡張子が .xls でも .xlsx でも、pandas は中身を見て読み分けるので保存名は固定でよい（.xlsx の読み込みには openpyxl が必要）
     path.write_bytes(response.content)
 
 

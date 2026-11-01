@@ -61,5 +61,5 @@ prices:
 # --- 保存先（このフォルダからの相対パス）---
 paths:
   raw_prices: data/raw/prices
-  jpx_list: data/raw/jpx_list.xls
+  jpx_list: data/raw/jpx_list.xlsx
   daily_output: output/daily
