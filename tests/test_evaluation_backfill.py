@@ -112,5 +112,19 @@ def test_benchmark_glitch_shows_as_outliers():
     assert s[1]["table"]["平均超過リターン(%)"].iloc[0] == pytest.approx(0)
     assert s[5]["table"]["平均超過リターン(%)"].iloc[0] < -20
     assert s[5]["table"]["超過リターンの中央値(%)"].iloc[0] == pytest.approx(0)   # 中央値はゆがまない
-    outliers = find_outliers(out, [1, 5])
+    outliers = find_outliers(out, [1, 5], {"1111": stock}, bench, 0.3)
     assert set(outliers["N"]) == {5} and len(outliers) == 2
+    assert outliers["data_suspect"].all()   # TOPIX ETF の株価に異常あり → データの誤りを疑う
+
+
+def test_real_big_move_is_not_data_suspect():
+    """毎日 +4% ずつ上がって 20 日で 2 倍超、のような実際にありうる動きはデータ異常にしない。"""
+    from kabu.evaluation import find_outliers
+    dates = pd.bdate_range("2026-09-01", periods=40, name="date")
+    bench = frame(np.full(40, 100.0), np.full(40, 100.0), dates)
+    closes = 100 * 1.04 ** np.arange(40)
+    stock = frame(closes, closes, dates)
+    rows = [[dates[0].strftime("%Y-%m-%d"), "1111", "A", 1, 70, 1]]
+    out = forward_returns(history_rows(rows), {"1111": stock}, bench, [20])
+    outliers = find_outliers(out, [20], {"1111": stock}, bench, 0.3)
+    assert len(outliers) == 1 and not outliers["data_suspect"].iloc[0]

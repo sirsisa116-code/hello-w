@@ -14,6 +14,8 @@
 import numpy as np
 import pandas as pd
 
+from kabu.data.prices import find_suspicious_moves
+
 CONFIRMED = "確定"
 PENDING = "未確定"
 MISSING = "株価欠損"
@@ -140,16 +142,33 @@ def summarize(results: pd.DataFrame, horizons: list[int], top_n: int) -> dict[in
 OUTLIER_PCT = 50.0   # 超過リターンがこれ（±50%）を超えたら、データ誤りを疑う
 
 
-def find_outliers(results: pd.DataFrame, horizons: list[int], threshold: float = OUTLIER_PCT) -> pd.DataFrame:
-    """超過リターンが極端な回を一覧にする。株価データの誤りがあると、ここに集中して現れる。"""
+def find_outliers(
+    results: pd.DataFrame, horizons: list[int], prices: dict[str, pd.DataFrame], benchmark: pd.DataFrame,
+    max_move: float, threshold: float = OUTLIER_PCT,
+) -> pd.DataFrame:
+    """超過リターンが極端な回を一覧にする。
+
+    極端な値は、株価データの誤りでも、実際の大きな値動きでも起きる。見分けるために、
+    その回の期間（買った日の前日〜売った日）に、銘柄か TOPIX ETF の株価に異常な値動き
+    （find_suspicious_moves）があるかを調べ、data_suspect 列に入れる。
+    """
+    calendar = benchmark.index
     rows = []
     for n in horizons:
         hit = results[results[f"excess_{n}"].abs() >= threshold]
         for r in hit.itertuples(index=False):
+            entry = calendar.searchsorted(pd.Timestamp(r.entry_date))
+            window = calendar[max(entry - 1, 0):entry + n]
+            suspect = any(
+                not find_suspicious_moves(df.loc[(df.index >= window[0]) & (df.index <= window[-1])], max_move).empty
+                for df in (prices.get(r.code), benchmark) if df is not None
+            )
             rows.append({"N": n, "data_date": r.data_date.date(), "code": r.code, "name": r.name,
                          "entry_date": r.entry_date, "ret": getattr(r, f"ret_{n}"),
-                         "bench": getattr(r, f"bench_{n}"), "excess": getattr(r, f"excess_{n}")})
-    return pd.DataFrame(rows, columns=["N", "data_date", "code", "name", "entry_date", "ret", "bench", "excess"])
+                         "bench": getattr(r, f"bench_{n}"), "excess": getattr(r, f"excess_{n}"),
+                         "data_suspect": suspect})
+    columns = ["N", "data_date", "code", "name", "entry_date", "ret", "bench", "excess", "data_suspect"]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def fmt_value(value, digits: int = 2, sign: bool = False) -> str:
@@ -205,18 +224,27 @@ def build_evaluation_report(
         ]
 
     if outliers is not None and not outliers.empty:
+        suspects = int(outliers["data_suspect"].sum())
+        lines += [f"## 極端な値（超過リターン ±{OUTLIER_PCT:.0f}% 以上）: {len(outliers)} 件", ""]
+        if suspects:
+            lines += [
+                f"うち {suspects} 件は、期間中の株価に異常な値動きがあり、データの誤りが疑われます。"
+                "原因が分かるまで上の平均は信用しないでください（中央値のほうがまだ当てになります）。",
+                "",
+            ]
+        else:
+            lines += [
+                "期間中の株価に異常な値動きは見つからなかったので、実際の大きな値動きと考えられます。"
+                "平均はこうした少数の回に大きく引っ張られるので、中央値とあわせて見てください。",
+                "",
+            ]
         lines += [
-            f"## 極端な値（超過リターン ±{OUTLIER_PCT:.0f}% 以上）: {len(outliers)} 件",
-            "",
-            "株価データの誤り（株式分割の反映漏れなど）の可能性が高いです。これがあると平均が大きくゆがむので、"
-            "原因が分かるまで上の平均は信用しないでください（中央値のほうがまだ当てになります）。",
-            "",
-            "| N | 基準日 | コード | 銘柄 | 買った日 | 騰落率 | TOPIX ETF | 超過 |",
-            "|---:|---|---|---|---|---:|---:|---:|",
+            "| N | 基準日 | コード | 銘柄 | 買った日 | 騰落率 | TOPIX ETF | 超過 | データ異常 |",
+            "|---:|---|---|---|---|---:|---:|---:|---|",
         ]
         for r in outliers.head(30).itertuples(index=False):
             lines.append(f"| {r.N} | {r.data_date} | {r.code} | {r.name} | {r.entry_date} | "
-                         f"{r.ret:+.1f}% | {r.bench:+.1f}% | {r.excess:+.1f}% |")
+                         f"{r.ret:+.1f}% | {r.bench:+.1f}% | {r.excess:+.1f}% | {'あり' if r.data_suspect else 'なし'} |")
         if len(outliers) > 30:
             lines.append(f"\n……ほか {len(outliers) - 30} 件（明細 CSV を見てください）")
         lines.append("")

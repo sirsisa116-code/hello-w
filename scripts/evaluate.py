@@ -77,11 +77,17 @@ def main() -> int:
 
     results = forward_returns(history, prices, prices[benchmark], horizons)
     summary = summarize(results, horizons, top_n)
-    outliers = find_outliers(results, horizons)
-    if not outliers.empty:
-        quality.error("evaluate", "", f"超過リターンが ±{OUTLIER_PCT:.0f}% を超える回が {len(outliers)} 件あります。"
-                                      "株価データの誤りの可能性が高く、平均は信用できません。"
+    outliers = find_outliers(results, horizons, prices, prices[benchmark], settings["prices"]["max_daily_move"])
+    suspects = int(outliers["data_suspect"].sum())
+    if suspects:
+        quality.error("evaluate", "", f"超過リターンが ±{OUTLIER_PCT:.0f}% を超え、期間中の株価にも異常な値動きがある回が"
+                                      f" {suspects} 件あります。株価データの誤りの可能性が高く、平均は信用できません。"
                                       "scripts/check_prices.py で株価を点検してください")
+    if len(outliers) > suspects:
+        names = ", ".join(sorted(set(outliers.loc[~outliers["data_suspect"], "code"])))
+        quality.warn("evaluate", "", f"超過リターンが ±{OUTLIER_PCT:.0f}% を超える回が {len(outliers) - suspects} 件あります"
+                                     f"（銘柄: {names}）。株価に異常はなく、実際の大きな値動きと考えられます。"
+                                     "平均が引っ張られやすいので中央値もあわせて見てください")
 
     missing = results[[f"status_{n}" for n in horizons]].eq(MISSING).any(axis=1)
     for r in results[missing].drop_duplicates("code").itertuples(index=False):
