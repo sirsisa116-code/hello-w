@@ -88,6 +88,21 @@ def _spearman(a: pd.Series, b: pd.Series) -> float:
     return a.rank().corr(b.rank())
 
 
+def t_value(values: pd.Series, overlap: int = 1) -> tuple[float, int]:
+    """平均が0から離れているかの目安（t値）と、実質的な件数。
+
+    N営業日後の成績は、隣り合う日でほとんど同じ期間を見ている（重なっている）ので、
+    日数をそのまま件数として数えると、実際より確かに見えてしまう。
+    そこで実質的な件数を「日数 ÷ N」として計算する（overlap = N）。
+    t値の絶対値が2を超えていなければ、偶然でも普通に出る程度の差と考える。
+    """
+    values = values.dropna()
+    effective = len(values) // max(overlap, 1)
+    if effective < 3 or values.std() == 0:
+        return np.nan, effective
+    return values.mean() / (values.std() / np.sqrt(effective)), effective
+
+
 def summarize(results: pd.DataFrame, horizons: list[int], top_n: int) -> dict[int, dict]:
     """N ごとに成績を集計する。"""
     summary = {}
@@ -127,8 +142,14 @@ def summarize(results: pd.DataFrame, horizons: list[int], top_n: int) -> dict[in
             })
         by_date = pd.DataFrame(by_date, columns=["data_date", "spread", "ic"])
 
+        ic_t, ic_k = t_value(by_date["ic"], overlap=n)
+        spread_t, _ = t_value(by_date["spread"], overlap=n)
+
         summary[n] = {
             "table": table,
+            "ic_t": ic_t,
+            "spread_t": spread_t,
+            "independent_dates": ic_k,
             "dates": len(by_date),
             "spread_mean": by_date["spread"].mean(),
             "spread_win": (by_date["spread"].dropna() > 0).mean() * 100 if by_date["spread"].notna().any() else np.nan,
@@ -220,6 +241,9 @@ def build_evaluation_report(
             f"、上位が勝った日の割合: {fmt_value(s['spread_win'], 0)}%",
             f"- 点数と超過リターンの順位相関（日ごとの平均）: {fmt_value(s['ic_mean'], 3, sign=True)}"
             "（0 なら点数と値動きは無関係、+ なら点数が高いほど上がった）",
+            f"- 偶然かどうかの目安（t値。期間の重なりを考えて、実質 {s['independent_dates']} 日分として計算）: "
+            f"順位相関 {fmt_value(s['ic_t'], 2, sign=True)}、上位−それ以外 {fmt_value(s['spread_t'], 2, sign=True)}"
+            "（絶対値が2未満なら、偶然でも普通に出る程度）",
             "",
         ]
 

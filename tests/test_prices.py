@@ -146,3 +146,39 @@ def test_repair_ignores_normal_moves():
     from kabu.data.prices import repair_scale_glitches
     df = make_prices(["2026-03-26", "2026-03-27", "2026-03-30"], [1000.0, 1200.0, 1000.0])
     assert repair_scale_glitches(df)[1] == []
+
+
+def _split_frame(after_volume):
+    dates = pd.bdate_range("2026-01-05", periods=60, name="date")
+    closes = np.r_[np.full(30, 11040.0), np.full(30, 3713.0)]
+    volumes = np.r_[np.full(30, 100_000.0), np.full(30, after_volume)]
+    return pd.DataFrame({"open": closes, "high": closes, "low": closes, "close": closes,
+                         "adj_close": closes, "volume": volumes, "source": "yfinance"}, index=dates)
+
+
+def test_repair_unadjusted_split_with_volume_evidence():
+    """実際に起きた例: しまむら（8227）の 1:3 分割が反映されていなかった。出来高も約3倍になる。"""
+    from kabu.data.prices import clean_prices
+    df = _split_frame(after_volume=300_000.0)
+    fixed, notes = clean_prices(df)
+    assert len(notes) == 1 and "1:3の株式分割" in notes[0]
+    assert fixed["close"].iloc[0] == pytest.approx(11040 / 3)
+    assert fixed["volume"].iloc[0] == pytest.approx(300_000)
+    assert fixed["close"].iloc[-1] == 3713.0
+    assert "1:3分割を調整" in fixed["source"].iloc[0]
+
+
+def test_no_split_repair_without_volume_change():
+    """出来高が変わらないなら分割とは言えないので、直さない。"""
+    from kabu.data.prices import clean_prices
+    fixed, notes = clean_prices(_split_frame(after_volume=100_000.0))
+    assert notes == [] and fixed["close"].iloc[0] == 11040.0
+
+
+def test_drop_invalid_rows():
+    """実際に起きた例: 再上場した SBI新生銀行（8303）の上場前の日に 5.5×10^10 円が入っていた。"""
+    from kabu.data.prices import clean_prices
+    df = make_prices(["2025-12-17", "2025-12-18", "2025-12-19"], [5.532e10, 1800.0, 1810.0])
+    fixed, notes = clean_prices(df)
+    assert list(fixed["close"]) == [1800.0, 1810.0]
+    assert "ありえない値" in notes[0]

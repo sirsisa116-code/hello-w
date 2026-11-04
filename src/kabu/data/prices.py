@@ -268,14 +268,92 @@ def repair_scale_glitches(
     return out, repaired
 
 
+MAX_VALID_PRICE = 1e7       # 1株1,000万円超は日本株ではありえない値として捨てる
+SPLIT_RATIOS = (2, 3, 4, 5, 10)
+
+
+def drop_invalid_rows(df: pd.DataFrame) -> tuple[pd.DataFrame, list]:
+    """値として成り立たない行（0円以下、1株1,000万円超）を捨てる。再上場銘柄の上場前の日などに入っていることがある。"""
+    bad = (df["close"] <= 0) | (df["close"] > MAX_VALID_PRICE) | (df["open"] > MAX_VALID_PRICE)
+    return df[~bad], [d.date() for d in df.index[bad]]
+
+
+def repair_unadjusted_splits(
+    df: pd.DataFrame, tolerance: float = 0.08, min_days_after: int = 3, window: int = 20
+) -> tuple[pd.DataFrame, list[tuple]]:
+    """株式分割が反映されていない株価を直す。
+
+    直す条件（すべて満たすときだけ）:
+      1. 終値と始値が、前日の終値のちょうど 1/n（2・3・4・5・10分割）付近に変わる（逆の併合なら n 倍）
+      2. その後 min_days_after 日以上たっても、その水準のまま（桁ずれのようにすぐ戻らない）
+      3. 出来高が、前後 window 日の中央値で比べて、おおよそ n 倍（併合なら 1/n）に変わっている
+    株価と出来高がそろって同じ倍率で変わるのは分割の特徴で、本当の暴落ではまず起きない。
+    そもそも東証には1日の値幅制限があり、1日で半値・倍になることは通常ありえない。
+    直すのは分割「前」の行で、株価を 1/n 倍、出来高を n 倍にする（分割後の水準にそろえる）。
+
+    戻り値: (直した株価, [(分割の日, 株価に掛けた倍率)])
+    """
+    out = df.copy()
+    repaired = []
+    close, open_, volume = df["close"].to_numpy(), df["open"].to_numpy(), df["volume"].to_numpy()
+    for i in range(1, len(df) - min_days_after + 1):
+        ratio = close[i] / close[i - 1]
+        gap = open_[i] / close[i - 1]
+        for n in SPLIT_RATIOS:
+            for factor in (1 / n, float(n)):   # 1/n: 分割、n: 併合
+                if abs(ratio / factor - 1) > tolerance or abs(gap / factor - 1) > tolerance:
+                    continue
+                # 戻らずにその水準のまま続いているか
+                after = close[i:i + min_days_after]
+                if np.any(np.abs(after / close[i] - 1) > 0.5):
+                    continue
+                before_vol = np.median(volume[max(0, i - window):i])
+                after_vol = np.median(volume[i:i + window])
+                # 出来高の変化を倍率で割り戻して、おおよそ1なら「同じ倍率で変わった」とみる。
+                # 分割のあとは株価が安くなって買いやすくなり、出来高が比率以上に増えることがあるので上側を広めにとる
+                low, high = (1 / 1.6, 2.5) if factor < 1 else (1 / 2.5, 1.4)
+                if before_vol <= 0 or not (low <= (after_vol / before_vol) * factor <= high):
+                    continue
+                rows = out.index[:i]
+                out.loc[rows, PRICE_FIELDS] = out.loc[rows, PRICE_FIELDS] * factor
+                out.loc[rows, "volume"] = out.loc[rows, "volume"] / factor
+                label = f"1:{n}分割" if factor < 1 else f"{n}:1併合"
+                out.loc[rows, "source"] = out.loc[rows, "source"].astype(str) + f"({label}を調整)"
+                repaired.append((df.index[i].date(), factor))
+                close, volume = out["close"].to_numpy(), out["volume"].to_numpy()
+                break
+            else:
+                continue
+            break
+    return out, repaired
+
+
+def clean_prices(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """データ源の誤りを直す。戻り値は (直した株価, 何を直したかの説明)。
+    順番: ありえない値の行を捨てる → 桁ずれ（すぐ戻るもの）を直す → 分割の反映漏れを直す"""
+    notes = []
+    df, dropped = drop_invalid_rows(df)
+    if dropped:
+        days = ", ".join(map(str, dropped[:5])) + (f" ほか{len(dropped) - 5}日" if len(dropped) > 5 else "")
+        notes.append(f"ありえない値（0円以下・1株1,000万円超）の行を捨てました: {days}")
+    df, glitches = repair_scale_glitches(df)
+    for start, end, factor in glitches:
+        period = f"{start}" if start == end else f"{start}〜{end}"
+        notes.append(f"{period} の株価が桁ずれしていたため ×{factor:g} で補正しました")
+    df, splits = repair_unadjusted_splits(df)
+    for date, factor in splits:
+        kind = f"1:{round(1 / factor)}の株式分割" if factor < 1 else f"{round(factor)}:1の株式併合"
+        notes.append(f"{date} の{kind}が株価に反映されていなかったため、それより前の株価を ×{factor:.4g}・"
+                     f"出来高を ×{1 / factor:.4g} で調整しました")
+    return df, notes
+
+
 def _repair_and_log(code: str, df: pd.DataFrame, quality: QualityLog | None) -> tuple[pd.DataFrame, bool]:
-    fixed, repaired = repair_scale_glitches(df)
+    fixed, notes = clean_prices(df)
     if quality is not None:
-        for start, end, factor in repaired:
-            period = f"{start}" if start == end else f"{start}〜{end}"
-            quality.warn(SOURCE, code, f"{period} の株価が桁ずれしていたため ×{factor:g} で補正しました"
-                                       "（データ源の誤り。株価データの source 列に記録）")
-    return fixed, bool(repaired)
+        for note in notes:
+            quality.warn(SOURCE, code, f"{note}（データ源の誤り。株価データの source 列に記録）")
+    return fixed, bool(notes)
 
 
 def check_prices(prices: dict[str, pd.DataFrame], conf: dict, now: datetime, quality: QualityLog) -> pd.Timestamp | None:
@@ -370,6 +448,8 @@ def update_prices(
                 sources[code] = "手元のみ"
                 continue
 
+        # 新しく取ったデータも先に直しておく（手元の直し済みデータと突き合わせて、食い違いと誤判定しないため）
+        fresh, _ = _repair_and_log(code, fresh, quality)
         merged, consistent = merge_with_cache(cached, fresh)
         if not consistent:
             # 過去の株価が修正されていた → 全期間を同じデータ源で取り直す

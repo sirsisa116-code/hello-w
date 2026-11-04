@@ -128,3 +128,14 @@ def test_real_big_move_is_not_data_suspect():
     out = forward_returns(history_rows(rows), {"1111": stock}, bench, [20])
     outliers = find_outliers(out, [20], {"1111": stock}, bench, 0.3)
     assert len(outliers) == 1 and not outliers["data_suspect"].iloc[0]
+
+
+def test_t_value():
+    from kabu.evaluation import t_value
+    t, k = t_value(pd.Series([1.0, 2.0, 3.0, np.nan]))
+    assert k == 3 and t == pytest.approx(2.0 / (1.0 / np.sqrt(3)))
+    assert np.isnan(t_value(pd.Series([1.0, 1.0, 1.0]))[0])
+    # 期間が5日ずつ重なるなら、30日分あっても実質6日分として数える
+    values = pd.Series(np.tile([1.0, 2.0, 3.0], 10))
+    t5, k5 = t_value(values, overlap=5)
+    assert k5 == 6 and t5 == pytest.approx(values.mean() / (values.std() / np.sqrt(6)))

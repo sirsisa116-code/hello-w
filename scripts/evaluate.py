@@ -134,7 +134,8 @@ def main() -> int:
               f"（中央値 {fmt_value(top['超過リターンの中央値(%)'], sign=True)}%）"
               f" / それ以外 {fmt_value(rest['平均超過リターン(%)'], sign=True)}%"
               f"（中央値 {fmt_value(rest['超過リターンの中央値(%)'], sign=True)}%）"
-              f" / 順位相関 {fmt_value(s['ic_mean'], 3, sign=True)}")
+              f" / 順位相関 {fmt_value(s['ic_mean'], 3, sign=True)}（t値 {fmt_value(s['ic_t'], 2, sign=True)}）")
+    print("  ※ t値は期間の重なりを考えて計算。絶対値が2未満なら、偶然でも普通に出る程度の差です")
     print("--- データの問題 ---")
     for line in quality.summary_lines():
         print(line)
