@@ -91,7 +91,7 @@ def test_backfill_uses_only_past_data():
     start = default_start(dates)
     assert start == dates[WEEKS52_DAYS - 1]
     target = dates[n - 11:n - 10]   # 急落の前日
-    history, log = backfill(universe, {"1111": stock}, target, weights, run_at, progress=lambda _: None)
+    history, log = backfill(universe, {"1111": stock}, target, weights, run_at, "watchlist", progress=lambda _: None)
 
     assert len(history) == 1 and log["ranked"].iloc[0] == 1
     # 急落前日の時点では、急落後の安値を知らないので高値圏・上昇配列のまま

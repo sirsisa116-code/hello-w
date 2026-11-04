@@ -23,7 +23,7 @@ import pandas as pd  # noqa: E402
 from kabu.backfill import backfill, default_start  # noqa: E402
 from kabu.config import load_settings, now_jst, resolve_path  # noqa: E402
 from kabu.data.prices import load_cached_prices, update_prices  # noqa: E402
-from kabu.data.universe import build_universe  # noqa: E402
+from kabu.data.universe import build_universe, universe_label  # noqa: E402
 from kabu.quality import QualityLog  # noqa: E402
 from kabu.scoring import load_weights  # noqa: E402
 
@@ -76,7 +76,7 @@ def main() -> int:
 
     print(f"{dates[0]:%Y-%m-%d} 〜 {dates[-1]:%Y-%m-%d} の {len(dates)} 営業日分を再現します")
     stock_prices = {c: df for c, df in prices.items() if c != benchmark}
-    history, log = backfill(universe, stock_prices, dates, weights, now)
+    history, log = backfill(universe, stock_prices, dates, weights, now, universe_label(settings))
 
     path = resolve_path(settings["paths"]["history_backfill"])
     history.to_csv(path, index=False, encoding="utf-8-sig")
@@ -89,7 +89,8 @@ def main() -> int:
     empty_days = int((log["ranked"] == 0).sum())
     if empty_days:
         quality.warn("backfill", "", f"{empty_days} 日分は、ランキングに入る銘柄が0でした")
-    quality.warn("backfill", "", "銘柄は今の対象銘柄を使っています。上場廃止になった銘柄などが入らないため、"
+    quality.warn("backfill", "", "銘柄は今の対象銘柄を使っています。上場廃止になった銘柄や、"
+                                 "この1〜2年で値上がりして対象に入ってきた銘柄の偏りがあるため、"
                                  "成績は実際より良く見えやすい点に注意してください")
 
     print(f"保存しました: {path}（{len(history)} 行）")

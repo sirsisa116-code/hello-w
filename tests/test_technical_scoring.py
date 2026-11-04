@@ -137,9 +137,31 @@ def test_rank_stocks_orders_and_excludes(tmp_path):
     assert "3333 古い: 株価が古い" in text
 
     history = tmp_path / "history.csv"
-    append_history(ranking, history, reference, run_at, 1)
-    append_history(ranking, history, reference, run_at, 1)   # 同じ日をやり直しても重複しない
-    append_history(ranking, history, pd.Timestamp("2026-11-02"), run_at, 1)
+    append_history(ranking, history, reference, run_at, 1, "watchlist")
+    append_history(ranking, history, reference, run_at, 1, "watchlist")   # 同じ日をやり直しても重複しない
+    append_history(ranking, history, pd.Timestamp("2026-11-02"), run_at, 1, "watchlist")
     saved = pd.read_csv(history, dtype={"code": str}, encoding="utf-8-sig")
     assert len(saved) == 4
     assert saved["code"].iloc[0] == "1111"
+
+
+def test_indicator_series_uses_only_past_data():
+    """全期間まとめて計算した値と、その日までで切って計算した値が一致する（未来を見ていない）。"""
+    from kabu.analysis.technical import compute_indicator_series, indicators_at
+    rng = np.random.default_rng(3)
+    df = make_prices(1000 * np.exp(np.cumsum(rng.normal(0, 0.02, 320))),
+                     volumes=rng.integers(1, 3_000_000, 320))
+    series = compute_indicator_series(df)
+    for pos in (10, 30, 80, 260, 319):
+        as_of = df.index[pos]
+        expected = compute_indicators(df[df.index <= as_of])
+        actual = indicators_at(series, as_of)
+        for key, value in expected.items():
+            assert (np.isnan(value) and np.isnan(actual[key])) or actual[key] == pytest.approx(value)
+
+
+def test_universe_label():
+    from kabu.data.universe import universe_label
+    assert universe_label({"universe": {"mode": "watchlist"}}) == "watchlist"
+    conf = {"universe": {"mode": "prime", "prime_scales": ["TOPIX Core30", "TOPIX Large70", "TOPIX Mid400"]}}
+    assert universe_label(conf) == "prime:Core30+Large70+Mid400"

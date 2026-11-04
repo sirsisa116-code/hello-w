@@ -1,8 +1,11 @@
 """日足の株価からテクニカル指標を計算する。
 
 計算はすべてこのファイルの中で完結し、ネットにはつながない。
-as_of（基準日）を渡すと、その日までのデータだけで計算する。
-バックテストで「その日に分かっていたことだけ」を使うための仕組み。
+
+compute_indicator_series は、全営業日について指標をまとめて計算する。
+各日の値はその日までの株価だけから計算される（移動平均などはすべて過去方向にしか見ない）ので、
+ある日の行を取り出せば「その日に分かっていたことだけ」で計算した値になる。
+後付けの再現では、銘柄ごとに一度だけ計算して、日付ごとに行を取り出して使う。
 
 データが足りずに計算できない指標は NaN（値なし）にする。
 NaN をどう扱うか（点数0にして「欠損」と表示する）は scoring.py が決める。
@@ -42,53 +45,52 @@ def rsi(close: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
     return value
 
 
-def compute_indicators(prices: pd.DataFrame, as_of: pd.Timestamp | None = None) -> dict:
-    """1銘柄の株価表から、最新日（または as_of の日）の指標を辞書で返す。"""
-    if as_of is not None:
-        prices = prices[prices.index <= as_of]
-    keys = list(INDICATORS) + EXTRA_VALUES
-    result = {k: np.nan for k in keys}
-    if len(prices) < 2:
-        return result
-
+def compute_indicator_series(prices: pd.DataFrame) -> pd.DataFrame:
+    """1銘柄の株価表から、全営業日の指標を表にして返す（行＝日付、列＝指標）。
+    履歴が足りない日の値は NaN になる（例: 75日線は75日分たまるまで NaN）。"""
     close = prices["close"]
     volume = prices["volume"]
-    n = len(prices)
-    last_close = close.iloc[-1]
-
     ma5 = close.rolling(5).mean()
     ma25 = close.rolling(25).mean()
     ma75 = close.rolling(75).mean()
 
-    result["close"] = last_close
-    result["ma5"] = ma5.iloc[-1]
-    result["ma25"] = ma25.iloc[-1]
-    result["ma75"] = ma75.iloc[-1]
-    result["day_change_pct"] = (last_close / close.iloc[-2] - 1) * 100
+    day_change = (close / close.shift(1) - 1) * 100
+    alignment = np.select([(ma5 > ma25) & (ma25 > ma75), (ma5 < ma25) & (ma25 < ma75)], [1.0, -1.0], 0.0)
+    # 当日を含めない直前20日の平均と比べる
+    previous_avg = volume.shift(1).rolling(VOLUME_AVG_DAYS).mean()
+    ratio = (volume / previous_avg).where(previous_avg > 0)
 
-    if n >= 75:
-        m5, m25, m75 = ma5.iloc[-1], ma25.iloc[-1], ma75.iloc[-1]
-        result["ma_alignment"] = 1.0 if m5 > m25 > m75 else -1.0 if m5 < m25 < m75 else 0.0
-    if n >= 30:
-        result["ma25_slope"] = (ma25.iloc[-1] / ma25.iloc[-6] - 1) * 100
-    if n >= 25:
-        result["deviation25"] = (last_close / ma25.iloc[-1] - 1) * 100
-    if n > RSI_PERIOD:
-        result["rsi14"] = rsi(close).iloc[-1]
+    out = pd.DataFrame({
+        "close": close,
+        "ma5": ma5,
+        "ma25": ma25,
+        "ma75": ma75,
+        "day_change_pct": day_change,
+        "ma_alignment": pd.Series(alignment, index=prices.index).where(ma75.notna()),
+        "ma25_slope": (ma25 / ma25.shift(5) - 1) * 100,
+        "deviation25": (close / ma25 - 1) * 100,
+        "rsi14": rsi(close),
+        "volume_ratio": ratio,
+        # 出来高を伴う上昇は良い、出来高を伴う下落は悪い、と区別するため符号を付ける
+        "volume_ratio_signed": ratio.where(day_change >= 0, -ratio),
+        "turnover20_oku": (close * volume).rolling(VOLUME_AVG_DAYS).mean() / 1e8,
+        "high52_distance": (close / prices["high"].rolling(WEEKS52_DAYS).max() - 1) * 100,
+    })
+    return out
 
-    if n > VOLUME_AVG_DAYS:
-        # 当日を含めない直前20日の平均と比べる
-        avg = volume.iloc[-VOLUME_AVG_DAYS - 1:-1].mean()
-        if avg > 0:
-            ratio = volume.iloc[-1] / avg
-            result["volume_ratio"] = ratio
-            # 出来高を伴う上昇は良い、出来高を伴う下落は悪い、と区別するため符号を付ける
-            result["volume_ratio_signed"] = ratio if result["day_change_pct"] >= 0 else -ratio
-    if n >= VOLUME_AVG_DAYS:
-        turnover = (close * volume).iloc[-VOLUME_AVG_DAYS:].mean()
-        result["turnover20_oku"] = turnover / 1e8
-    if n >= WEEKS52_DAYS:
-        high52 = prices["high"].iloc[-WEEKS52_DAYS:].max()
-        result["high52_distance"] = (last_close / high52 - 1) * 100
 
-    return result
+def indicators_at(series: pd.DataFrame, as_of: pd.Timestamp | None = None) -> dict:
+    """compute_indicator_series の結果から、as_of の日（なければそれ以前で一番近い日）の値を取り出す。"""
+    keys = list(INDICATORS) + EXTRA_VALUES
+    pos = len(series) if as_of is None else series.index.searchsorted(as_of, side="right")
+    if pos == 0:
+        return {k: np.nan for k in keys}
+    row = series.iloc[pos - 1]
+    return {k: row[k] for k in keys}
+
+
+def compute_indicators(prices: pd.DataFrame, as_of: pd.Timestamp | None = None) -> dict:
+    """1銘柄の株価表から、最新日（または as_of の日）の指標を辞書で返す。"""
+    if as_of is not None:
+        prices = prices[prices.index <= as_of]
+    return indicators_at(compute_indicator_series(prices))

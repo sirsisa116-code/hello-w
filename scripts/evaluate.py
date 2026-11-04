@@ -65,6 +65,13 @@ def main() -> int:
         history = history[history["weights_version"] == versions[-1]]
         versions = versions[-1:]
 
+    # 対象銘柄の範囲（20銘柄・TOPIX500 など）が違うランキングも混ぜない。一番新しい日の範囲だけを使う
+    if "universe" not in history.columns:
+        history["universe"] = "watchlist"
+    latest_universe = history.loc[pd.to_datetime(history["data_date"]).idxmax(), "universe"]
+    excluded_universes = sorted(set(history["universe"]) - {latest_universe})
+    history = history[history["universe"] == latest_universe]
+
     benchmark = settings["benchmark"]["code"]
     codes = sorted(history["code"].unique())
     prices = load_cached_prices(codes + [benchmark], settings, quality)
@@ -95,7 +102,9 @@ def main() -> int:
             quality.warn("evaluate", r.code, "買値・売値の日の株価がない回があります（売買停止・データ欠損の可能性）。その回は集計から外しました")
 
     latest = prices[benchmark].index[-1].date()
-    notes = [f"手元の株価は {latest} まで。これより後の値動きが必要な分は「未確定」として外しています。"]
+    notes = [f"対象銘柄の範囲: {latest_universe}"
+             + (f"（範囲の違う {', '.join(excluded_universes)} の分は混ぜずに外しています）" if excluded_universes else ""),
+             f"手元の株価は {latest} まで。これより後の値動きが必要な分は「未確定」として外しています。"]
     if args.source == "backfill":
         notes.append("後付けの再現は「今の」対象銘柄で計算しています。上場廃止になった銘柄などが入らないため、"
                      "成績は実際より良く見えやすいです。")

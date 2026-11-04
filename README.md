@@ -53,7 +53,9 @@ CSV は Excel でそのまま開けます。レポート（`.md`）はメモ帳�
 
 ## 設定を変える
 
-- `config/settings.yaml`: 対象銘柄（`watchlist`）、データの取り方、レポートに載せる銘柄数
+- `config/settings.yaml`: 対象銘柄、データの取り方、レポートに載せる銘柄数
+  - `universe.mode: prime`（いまの設定）: 東証プライムのうち TOPIX500 相当（Core30・Large70・Mid400、約500銘柄）
+  - `universe.mode: watchlist`: `watchlist` に書いた銘柄だけ（約20銘柄、動作確認用）
 - `config/weights.yaml`: 点数ルールと分野の重み。書き換えたら先頭の `version` を1つ上げてください
 
 どちらもメモ帳などで開いて編集できます。
@@ -74,7 +76,7 @@ python scripts/evaluate.py --source backfill  # 後付けで再現したラン�
 毎日のランキングは始めた日からしかたまらないので、過去の各営業日について同じ計算をやり直し、`output/history_backfill.csv` に保存します。毎日の `history.csv` とは混ぜません。
 
 ```powershell
-python scripts/backfill.py --fetch-days 900   # 初回: 株価を約2年半分取り直してから再現（数分かかる）
+python scripts/backfill.py --fetch-days 900   # 初回: 株価を約2年半分取り直してから再現（500銘柄で20〜30分かかることがある）
 python scripts/backfill.py                    # 2回目以降: 手元の株価だけで再現し直す（点数ルールを変えたときなど）
 ```
 

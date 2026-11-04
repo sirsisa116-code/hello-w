@@ -78,10 +78,26 @@ def parse_stooq_csv(text: str) -> pd.DataFrame | None:
 
 # ---------- 取ってくる ----------
 
-def fetch_yfinance(codes: list[str], start: str, chunk_size: int, pause: float) -> dict[str, pd.DataFrame]:
-    """yfinance でまとめて取る。取れた銘柄だけを返す（取れなかった銘柄は辞書に入らない）。"""
+def fetch_yfinance(
+    codes: list[str], start: str, chunk_size: int, pause: float, retry_wait: float = 0
+) -> dict[str, pd.DataFrame]:
+    """yfinance でまとめて取る。取れた銘柄だけを返す（取れなかった銘柄は辞書に入らない）。
+    retry_wait を指定すると、取れなかった銘柄をその秒数待ってから1回だけ取り直す
+    （一度に大量に問い合わせると、一時的に断られることがあるため）。"""
+    results = _fetch_yfinance_once(codes, start, chunk_size, pause)
+    missing = [c for c in codes if c not in results]
+    if missing and retry_wait > 0:
+        print(f"  yfinance で {len(missing)} 銘柄取れなかったので、{retry_wait:.0f}秒待って取り直します…")
+        time.sleep(retry_wait)
+        results |= _fetch_yfinance_once(missing, start, chunk_size, pause)
+    return results
+
+
+def _fetch_yfinance_once(codes: list[str], start: str, chunk_size: int, pause: float) -> dict[str, pd.DataFrame]:
     results = {}
     for i in range(0, len(codes), chunk_size):
+        if len(codes) > chunk_size:
+            print(f"  yfinance: {i + 1}〜{min(i + chunk_size, len(codes))} / {len(codes)} 銘柄")
         chunk = codes[i:i + chunk_size]
         tickers = [f"{c}.T" for c in chunk]
         try:
@@ -326,11 +342,11 @@ def update_prices(
     update_codes = [c for c in codes if c not in new_codes]
     fetched: dict[str, pd.DataFrame] = {}
     if new_codes:
-        fetched |= fetch_yfinance(new_codes, full_start, conf["chunk_size"], conf["pause_seconds"])
+        fetched |= fetch_yfinance(new_codes, full_start, conf["chunk_size"], conf["pause_seconds"], conf["retry_wait_seconds"])
     if update_codes:
         last = min(caches[c].index[-1] for c in update_codes)
         start = (last - timedelta(days=conf["overlap_days"])).strftime("%Y-%m-%d")
-        fetched |= fetch_yfinance(update_codes, start, conf["chunk_size"], conf["pause_seconds"])
+        fetched |= fetch_yfinance(update_codes, start, conf["chunk_size"], conf["pause_seconds"], conf["retry_wait_seconds"])
 
     prices: dict[str, pd.DataFrame] = {}
     sources: dict[str, str] = {}

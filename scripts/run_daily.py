@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from kabu.config import load_settings, now_jst, resolve_path  # noqa: E402
 from kabu.data.prices import update_prices  # noqa: E402
-from kabu.data.universe import build_universe  # noqa: E402
+from kabu.data.universe import build_universe, universe_label  # noqa: E402
 from kabu.quality import QualityLog  # noqa: E402
 from kabu.report import append_history, build_report, save_ranking_csv, save_report  # noqa: E402
 from kabu.scoring import load_weights, rank_stocks  # noqa: E402
@@ -64,7 +64,8 @@ def main() -> int:
         stamp = data_date.strftime("%Y-%m-%d")
         save_ranking_csv(ranking, out_dir / f"{stamp}_ranking.csv")
         if not ranking.empty:
-            append_history(ranking, resolve_path(settings["paths"]["history"]), data_date, now, weights["version"])
+            append_history(ranking, resolve_path(settings["paths"]["history"]), data_date, now, weights["version"],
+                           universe_label(settings))
         text = build_report(ranking, details, excluded, quality, data_date, now, weights, settings["report"]["top_n"])
         report_path = out_dir / f"{stamp}_report.md"
         save_report(text, report_path)

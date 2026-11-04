@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from kabu.analysis.technical import INDICATORS, compute_indicators
+from kabu.analysis.technical import INDICATORS, compute_indicator_series, indicators_at
 from kabu.config import PROJECT_ROOT
 from kabu.quality import QualityLog
 
@@ -110,8 +110,12 @@ def rank_stocks(
     reference: pd.Timestamp,
     weights: dict,
     quality: QualityLog,
+    indicator_series: dict[str, pd.DataFrame] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, dict[str, CategoryScore]], pd.DataFrame]:
     """全銘柄に点数を付けて並べる。
+
+    indicator_series に銘柄ごとの compute_indicator_series の結果を渡すと、計算し直さずに使う
+    （後付けの再現で同じ銘柄を何百日分も計算するときに速くするため）。
 
     戻り値:
       ranking:  点数順に並べた表
@@ -130,15 +134,19 @@ def rank_stocks(
 
         df = prices.get(code)
         # 基準日より後のデータは見ない（後付けの再現で過去の日付を基準日にするときのため）
-        known = df.index[df.index <= reference] if df is not None else []
-        if len(known) == 0:
+        known = 0 if df is None else df.index.searchsorted(reference, side="right")
+        if known == 0:
             exclude("株価データなし")
             continue
-        if known[-1] < reference:
-            exclude(f"株価が古い（最新 {known[-1].date()}、基準日 {reference.date()}）")
+        last_known = df.index[known - 1]
+        if last_known < reference:
+            exclude(f"株価が古い（最新 {last_known.date()}、基準日 {reference.date()}）")
             continue
 
-        ind = compute_indicators(df, as_of=reference)
+        series = indicator_series.get(code) if indicator_series is not None else None
+        if series is None:
+            series = compute_indicator_series(df)
+        ind = indicators_at(series, reference)
         if pd.isna(ind["turnover20_oku"]):
             exclude("売買代金を計算できない（履歴不足）")
             continue

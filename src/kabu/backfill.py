@@ -6,6 +6,7 @@
 ただし、次の偏りは避けられない（レポートにも書く）:
   - 銘柄は「今の」対象銘柄を使う。途中で上場廃止になった銘柄や、
     今は条件から外れた銘柄が入らないので、成績が良く見えやすい
+    （TOPIX500 なら「今500位以内に入っている＝これまで株価が上がってきた」銘柄に偏る）
   - ニュースは過去にさかのぼれないので、テクニカル（と将来のファンダメンタル）だけ
 """
 
@@ -13,7 +14,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from kabu.analysis.technical import WEEKS52_DAYS
+from kabu.analysis.technical import WEEKS52_DAYS, compute_indicator_series
 from kabu.quality import QualityLog
 from kabu.scoring import rank_stocks
 
@@ -31,20 +32,24 @@ def backfill(
     dates: pd.DatetimeIndex,
     weights: dict,
     run_at: datetime,
+    universe_label: str,
     progress=print,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """各日付のランキングを作り、history.csv と同じ形の表にして返す。
     戻り値は (ランキングの履歴, 日ごとの記録: 何銘柄入ったか・指標の欠損が何件あったか)。"""
     frames, log = [], []
+    # 指標は銘柄ごとに一度だけ全期間を計算しておき、日付ごとに行を取り出す
+    series = {code: compute_indicator_series(df) for code, df in prices.items()}
     for i, date in enumerate(dates, 1):
         quality = QualityLog()  # 日ごとの警告は件数だけ数える（全部出すと多すぎるため）
-        ranking, _, excluded = rank_stocks(universe, prices, date, weights, quality)
+        ranking, _, excluded = rank_stocks(universe, prices, date, weights, quality, series)
         log.append({"data_date": date.date(), "ranked": len(ranking), "excluded": len(excluded),
                     "missing_indicator_warnings": quality.count("WARN")})
         if not ranking.empty:
             ranking.insert(0, "data_date", date.strftime("%Y-%m-%d"))
             ranking.insert(1, "run_at", run_at.strftime("%Y-%m-%d %H:%M"))
             ranking.insert(2, "weights_version", weights["version"])
+            ranking.insert(3, "universe", universe_label)
             frames.append(ranking)
         if i % 20 == 0 or i == len(dates):
             progress(f"  {i} / {len(dates)} 日 処理済み（{date:%Y-%m-%d}）")

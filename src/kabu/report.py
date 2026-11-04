@@ -16,17 +16,22 @@ def save_ranking_csv(ranking: pd.DataFrame, path: Path) -> None:
     ranking.to_csv(path, index=False, encoding="utf-8-sig")
 
 
-def append_history(ranking: pd.DataFrame, path: Path, data_date: pd.Timestamp, run_at: datetime, weights_version) -> None:
+def append_history(
+    ranking: pd.DataFrame, path: Path, data_date: pd.Timestamp, run_at: datetime, weights_version, universe_label: str
+) -> None:
     """全日付のランキングを1つのファイルに蓄積する。
     同じ基準日で実行し直した場合は、その日の分を入れ替える（重複させない）。"""
     new = ranking.copy()
     new.insert(0, "data_date", data_date.strftime("%Y-%m-%d"))
     new.insert(1, "run_at", run_at.strftime("%Y-%m-%d %H:%M"))
     new.insert(2, "weights_version", weights_version)
+    new.insert(3, "universe", universe_label)
 
     if path.exists():
         old = pd.read_csv(path, dtype={"code": str}, encoding="utf-8-sig")
         old = old[old["data_date"] != new["data_date"].iloc[0]]
+        if "universe" not in old.columns:
+            old.insert(3, "universe", "watchlist")   # 対象銘柄の範囲を記録する前の分は、すべて watchlist だった
         new = pd.concat([old, new], ignore_index=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     new.to_csv(path, index=False, encoding="utf-8-sig")

@@ -112,6 +112,15 @@ def select_prime(jpx: pd.DataFrame, scales: list[str]) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def universe_label(settings: dict) -> str:
+    """履歴に記録する「対象銘柄の範囲」の名前。範囲が違うランキングを事後検証で混ぜないため。"""
+    conf = settings["universe"]
+    if conf["mode"] == "prime":
+        scales = conf.get("prime_scales") or []
+        return "prime:" + ("+".join(s.replace("TOPIX ", "") for s in scales) if scales else "all")
+    return "watchlist"
+
+
 def build_universe(settings: dict, quality: QualityLog) -> pd.DataFrame:
     """対象銘柄の表（列: code, name, market, sector33, scale）を返す。"""
     conf = settings["universe"]
@@ -139,7 +148,13 @@ def build_universe(settings: dict, quality: QualityLog) -> pd.DataFrame:
             raise RuntimeError("prime モードですが、JPX銘柄一覧が取れないため銘柄を決められません")
         df = select_prime(jpx, conf.get("prime_scales") or [])
         if df.empty:
-            quality.error(SOURCE, "", "条件に合う銘柄が0件です。prime_scales の書き方を確認してください")
+            # JPX 側の表記が変わった可能性があるので、実際にある値を見せて原因を探せるようにする
+            markets = sorted(jpx["market"].dropna().astype(str).unique())
+            scales = sorted(jpx["scale"].dropna().astype(str).unique())
+            raise RuntimeError(
+                "条件に合う銘柄が0件です。JPX一覧の表記と設定が合っていない可能性があります。\n"
+                f"  市場区分の値: {markets}\n  規模区分の値: {scales}"
+            )
         return df
 
     raise ValueError(f"universe.mode の値が不明です: {mode}（watchlist か prime）")

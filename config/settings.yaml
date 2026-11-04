@@ -6,7 +6,7 @@
 universe:
   # watchlist: 下の watchlist に書いた銘柄だけを対象にする（開発中はこちら）
   # prime:     東証プライム市場の銘柄から選ぶ（本番用）
-  mode: watchlist
+  mode: prime
 
   # mode: prime のときだけ使う。JPXの「規模区分」で絞り込む。
   # 空のリスト [] にすると、プライム全銘柄（約1,600）が対象になる。
@@ -54,6 +54,7 @@ prices:
   overlap_days: 10         # 2回目以降、手元のデータと重ねて取り直す日数
   chunk_size: 50           # yfinance に一度に問い合わせる銘柄数
   pause_seconds: 1.0       # 問い合わせの間の待ち時間（相手に負荷をかけないため）
+  retry_wait_seconds: 30   # yfinance で取れなかった銘柄を取り直すまでの待ち時間
   market_close_jst: "16:00"  # これより前に実行したら、当日分は未確定として捨てる
   min_history_rows: 80     # これより短い銘柄は「履歴不足」と警告する
   max_stale_days: 5        # 最新データが今日よりこの日数以上古ければ警告する
@@ -71,7 +72,7 @@ paths:
 
 # --- 事後検証 ---
 evaluation:
-  top_n: 5                 # 「上位」として成績を見る銘柄数
+  top_n: 10                # 「上位」として成績を見る銘柄数
   horizons: [1, 5, 10, 20] # 何営業日後の値動きを見るか
 
 # --- レポート ---
