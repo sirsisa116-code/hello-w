@@ -20,7 +20,9 @@ import pandas as pd  # noqa: E402
 
 from kabu.config import load_settings, now_jst, resolve_path  # noqa: E402
 from kabu.data.prices import load_cached_prices  # noqa: E402
-from kabu.evaluation import MISSING, build_evaluation_report, fmt_value, forward_returns, summarize  # noqa: E402
+from kabu.evaluation import (  # noqa: E402
+    MISSING, OUTLIER_PCT, build_evaluation_report, find_outliers, fmt_value, forward_returns, summarize,
+)
 from kabu.quality import QualityLog  # noqa: E402
 
 SOURCES = {
@@ -75,6 +77,11 @@ def main() -> int:
 
     results = forward_returns(history, prices, prices[benchmark], horizons)
     summary = summarize(results, horizons, top_n)
+    outliers = find_outliers(results, horizons)
+    if not outliers.empty:
+        quality.error("evaluate", "", f"超過リターンが ±{OUTLIER_PCT:.0f}% を超える回が {len(outliers)} 件あります。"
+                                      "株価データの誤りの可能性が高く、平均は信用できません。"
+                                      "scripts/check_prices.py で株価を点検してください")
 
     missing = results[[f"status_{n}" for n in horizons]].eq(MISSING).any(axis=1)
     for r in results[missing].drop_duplicates("code").itertuples(index=False):
@@ -92,7 +99,7 @@ def main() -> int:
     dates = pd.to_datetime(history["data_date"])
     report = build_evaluation_report(
         summary, source_label, versions, excluded_versions,
-        (dates.min().date(), dates.max().date()), top_n, notes,
+        (dates.min().date(), dates.max().date()), top_n, notes, outliers,
     )
     stamp = now.strftime("%Y-%m-%d")
     report_path = out_dir / f"{stamp}_{args.source}_report.md"
@@ -109,7 +116,9 @@ def main() -> int:
         top = s["table"].iloc[0]
         rest = s["table"].iloc[1]
         print(f"  {n:>2}営業日後: {s['dates']}日分 / 上位{top_n} 平均超過 {fmt_value(top['平均超過リターン(%)'], sign=True)}%"
+              f"（中央値 {fmt_value(top['超過リターンの中央値(%)'], sign=True)}%）"
               f" / それ以外 {fmt_value(rest['平均超過リターン(%)'], sign=True)}%"
+              f"（中央値 {fmt_value(rest['超過リターンの中央値(%)'], sign=True)}%）"
               f" / 順位相関 {fmt_value(s['ic_mean'], 3, sign=True)}")
     print("--- データの問題 ---")
     for line in quality.summary_lines():

@@ -16,7 +16,7 @@ from kabu.data.prices import (
 )
 from kabu.quality import QualityLog
 
-CONF = {"max_stale_days": 5, "min_history_rows": 3}
+CONF = {"max_stale_days": 5, "min_history_rows": 3, "max_daily_move": 0.3, "suspicious_check_rows": 30}
 
 
 def make_prices(dates, closes, volume=1000):
@@ -80,9 +80,9 @@ def test_drop_unfinished_today():
 def test_check_prices_flags_lagging_and_short():
     now = datetime(2026, 10, 30, 17, 0, tzinfo=JST)
     prices = {
-        "1111": make_prices(["2026-10-28", "2026-10-29", "2026-10-30"], [1, 2, 3]),
-        "2222": make_prices(["2026-10-27", "2026-10-28", "2026-10-29"], [1, 2, 3]),  # 1日遅れ
-        "3333": make_prices(["2026-10-29", "2026-10-30"], [1, 2], volume=0),         # 短い・出来高0
+        "1111": make_prices(["2026-10-28", "2026-10-29", "2026-10-30"], [100, 101, 102]),
+        "2222": make_prices(["2026-10-27", "2026-10-28", "2026-10-29"], [100, 101, 102]),  # 1日遅れ
+        "3333": make_prices(["2026-10-29", "2026-10-30"], [100, 101], volume=0),         # 短い・出来高0
     }
     quality = QualityLog()
     reference = check_prices(prices, CONF, now, quality)
@@ -100,3 +100,19 @@ def test_check_prices_flags_all_stale():
     quality = QualityLog()
     check_prices(prices, CONF, now, quality)
     assert any(i.code == "" and "止まり" in i.message for i in quality.issues)
+
+
+def test_find_suspicious_moves():
+    from kabu.data.prices import find_suspicious_moves
+    df = make_prices(["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"], [100, 101, 1010, 102])
+    moves = find_suspicious_moves(df, 0.3)
+    assert set(moves["date"].astype(str)) == {"2026-10-29", "2026-10-30"}   # 10倍になった日と戻った日
+    assert find_suspicious_moves(make_prices(["2026-10-29", "2026-10-30"], [100, 120]), 0.3).empty
+
+
+def test_check_prices_warns_on_suspicious_move():
+    now = datetime(2026, 10, 30, 17, 0, tzinfo=JST)
+    prices = {"1111": make_prices(["2026-10-28", "2026-10-29", "2026-10-30"], [100, 1000, 100])}
+    quality = QualityLog()
+    check_prices(prices, CONF, now, quality)
+    assert any("異常に大きな値動き" in i.message for i in quality.issues)

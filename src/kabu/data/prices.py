@@ -163,8 +163,36 @@ def drop_unfinished_today(df: pd.DataFrame, now: datetime, close_time: str) -> t
 
 # ---------- 点検 ----------
 
+def find_suspicious_moves(df: pd.DataFrame, max_move: float) -> pd.DataFrame:
+    """ありえないほど大きな値動きの日を探す。株式分割の反映漏れやデータの誤りを見つけるため。
+
+    見るもの（max_move = 0.3 なら ±30% 超）:
+      前日比:   前日の終値 → 当日の終値
+      寄り付き: 前日の終値 → 当日の始値
+      日中:     当日の始値 → 当日の終値
+      0円以下:  値として成り立たない
+    """
+    prev_close = df["close"].shift(1)
+    checks = {
+        "前日比": df["close"] / prev_close - 1,
+        "寄り付き": df["open"] / prev_close - 1,
+        "日中": df["close"] / df["open"] - 1,
+    }
+    rows = []
+    for kind, change in checks.items():
+        for date in change.index[change.abs() > max_move]:
+            rows.append({"date": date.date(), "kind": kind, "prev_close": prev_close.get(date),
+                         "open": df.at[date, "open"], "close": df.at[date, "close"],
+                         "change_pct": round(change[date] * 100, 1)})
+    for date in df.index[(df[["open", "close"]] <= 0).any(axis=1)]:
+        rows.append({"date": date.date(), "kind": "0円以下", "prev_close": prev_close.get(date),
+                     "open": df.at[date, "open"], "close": df.at[date, "close"], "change_pct": np.nan})
+    columns = ["date", "kind", "prev_close", "open", "close", "change_pct"]
+    return pd.DataFrame(rows, columns=columns).sort_values(["date", "kind"]).reset_index(drop=True)
+
+
 def check_prices(prices: dict[str, pd.DataFrame], conf: dict, now: datetime, quality: QualityLog) -> pd.Timestamp | None:
-    """古さ・長さ・出来高を点検する。全銘柄の中で一番新しい日付（基準日）を返す。"""
+    """古さ・長さ・出来高・異常な値動きを点検する。全銘柄の中で一番新しい日付（基準日）を返す。"""
     if not prices:
         return None
     latest = {code: df.index[-1] for code, df in prices.items()}
@@ -183,6 +211,13 @@ def check_prices(prices: dict[str, pd.DataFrame], conf: dict, now: datetime, qua
             quality.warn(SOURCE, code, f"履歴が {len(df)} 日分しかありません（上場間もない・取得不足）")
         if df["volume"].iloc[-1] == 0:
             quality.info(SOURCE, code, f"{latest[code].date()} の出来高が0です（売買不成立の可能性）")
+        # 毎日の点検は直近分だけ（全期間は scripts/check_prices.py で見る）
+        recent = df.iloc[-(conf["suspicious_check_rows"] + 1):]
+        moves = find_suspicious_moves(recent, conf["max_daily_move"])
+        if not moves.empty:
+            dates = ", ".join(sorted({str(d) for d in moves["date"]}))
+            quality.warn(SOURCE, code, f"異常に大きな値動きがあります（{dates}）。株式分割の反映漏れ・データ誤りの可能性。"
+                                       "scripts/check_prices.py で詳細を確認してください")
     return reference
 
 

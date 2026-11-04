@@ -137,6 +137,21 @@ def summarize(results: pd.DataFrame, horizons: list[int], top_n: int) -> dict[in
     return summary
 
 
+OUTLIER_PCT = 50.0   # 超過リターンがこれ（±50%）を超えたら、データ誤りを疑う
+
+
+def find_outliers(results: pd.DataFrame, horizons: list[int], threshold: float = OUTLIER_PCT) -> pd.DataFrame:
+    """超過リターンが極端な回を一覧にする。株価データの誤りがあると、ここに集中して現れる。"""
+    rows = []
+    for n in horizons:
+        hit = results[results[f"excess_{n}"].abs() >= threshold]
+        for r in hit.itertuples(index=False):
+            rows.append({"N": n, "data_date": r.data_date.date(), "code": r.code, "name": r.name,
+                         "entry_date": r.entry_date, "ret": getattr(r, f"ret_{n}"),
+                         "bench": getattr(r, f"bench_{n}"), "excess": getattr(r, f"excess_{n}")})
+    return pd.DataFrame(rows, columns=["N", "data_date", "code", "name", "entry_date", "ret", "bench", "excess"])
+
+
 def fmt_value(value, digits: int = 2, sign: bool = False) -> str:
     if value is None or pd.isna(value):
         return "—"
@@ -145,7 +160,7 @@ def fmt_value(value, digits: int = 2, sign: bool = False) -> str:
 
 def build_evaluation_report(
     summary: dict[int, dict], source_label: str, versions: list, excluded_versions: list,
-    date_range: tuple, top_n: int, notes: list[str],
+    date_range: tuple, top_n: int, notes: list[str], outliers: pd.DataFrame | None = None,
 ) -> str:
     lines = [
         f"# 事後検証レポート（{source_label}）",
@@ -188,6 +203,23 @@ def build_evaluation_report(
             "（0 なら点数と値動きは無関係、+ なら点数が高いほど上がった）",
             "",
         ]
+
+    if outliers is not None and not outliers.empty:
+        lines += [
+            f"## 極端な値（超過リターン ±{OUTLIER_PCT:.0f}% 以上）: {len(outliers)} 件",
+            "",
+            "株価データの誤り（株式分割の反映漏れなど）の可能性が高いです。これがあると平均が大きくゆがむので、"
+            "原因が分かるまで上の平均は信用しないでください（中央値のほうがまだ当てになります）。",
+            "",
+            "| N | 基準日 | コード | 銘柄 | 買った日 | 騰落率 | TOPIX ETF | 超過 |",
+            "|---:|---|---|---|---|---:|---:|---:|",
+        ]
+        for r in outliers.head(30).itertuples(index=False):
+            lines.append(f"| {r.N} | {r.data_date} | {r.code} | {r.name} | {r.entry_date} | "
+                         f"{r.ret:+.1f}% | {r.bench:+.1f}% | {r.excess:+.1f}% |")
+        if len(outliers) > 30:
+            lines.append(f"\n……ほか {len(outliers) - 30} 件（明細 CSV を見てください）")
+        lines.append("")
 
     lines += [
         "---",

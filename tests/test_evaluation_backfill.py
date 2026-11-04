@@ -97,3 +97,20 @@ def test_backfill_uses_only_past_data():
     # 急落前日の時点では、急落後の安値を知らないので高値圏・上昇配列のまま
     assert history["close"].iloc[0] == pytest.approx(1500)
     assert history["ma_alignment"].iloc[0] == 1
+
+
+def test_benchmark_glitch_shows_as_outliers():
+    """TOPIX ETF の株価が1日だけ10倍になっていると、1営業日後は無傷で、5営業日後の平均だけが大きくゆがむ。"""
+    from kabu.evaluation import find_outliers
+    dates = pd.bdate_range("2026-09-01", periods=40, name="date")
+    bench = frame(np.full(40, 100.0), np.full(40, 100.0), dates)
+    bench.iloc[20, [0, 3]] = 1000.0   # 21日目だけ始値・終値とも10倍
+    stock = frame(np.full(40, 100.0), np.full(40, 100.0), dates)
+    rows = [[d.strftime("%Y-%m-%d"), "1111", "A", 1, 70, 1] for d in dates[:30]]
+    out = forward_returns(history_rows(rows), {"1111": stock}, bench, [1, 5])
+    s = summarize(out, [1, 5], top_n=1)
+    assert s[1]["table"]["平均超過リターン(%)"].iloc[0] == pytest.approx(0)
+    assert s[5]["table"]["平均超過リターン(%)"].iloc[0] < -20
+    assert s[5]["table"]["超過リターンの中央値(%)"].iloc[0] == pytest.approx(0)   # 中央値はゆがまない
+    outliers = find_outliers(out, [1, 5])
+    assert set(outliers["N"]) == {5} and len(outliers) == 2
