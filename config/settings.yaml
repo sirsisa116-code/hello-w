@@ -64,6 +64,13 @@ paths:
   jpx_list: data/raw/jpx_list.xlsx
   daily_output: output/daily
   history: output/history.csv
+  history_backfill: output/history_backfill.csv   # 後付けで再現したランキング（毎日の分とは混ぜない）
+  evaluation: output/evaluation
+
+# --- 事後検証 ---
+evaluation:
+  top_n: 5                 # 「上位」として成績を見る銘柄数
+  horizons: [1, 5, 10, 20] # 何営業日後の値動きを見るか
 
 # --- レポート ---
 report:

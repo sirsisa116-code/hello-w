@@ -129,11 +129,13 @@ def rank_stocks(
             excluded.append({"code": code, "name": name, "reason": reason})
 
         df = prices.get(code)
-        if df is None or df.empty:
+        # 基準日より後のデータは見ない（後付けの再現で過去の日付を基準日にするときのため）
+        known = df.index[df.index <= reference] if df is not None else []
+        if len(known) == 0:
             exclude("株価データなし")
             continue
-        if df.index[-1] < reference:
-            exclude(f"株価が古い（最新 {df.index[-1].date()}、基準日 {reference.date()}）")
+        if known[-1] < reference:
+            exclude(f"株価が古い（最新 {known[-1].date()}、基準日 {reference.date()}）")
             continue
 
         ind = compute_indicators(df, as_of=reference)

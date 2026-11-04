@@ -188,19 +188,34 @@ def check_prices(prices: dict[str, pd.DataFrame], conf: dict, now: datetime, qua
 
 # ---------- 全体の流れ ----------
 
+def load_cached_prices(codes: list[str], settings: dict) -> dict[str, pd.DataFrame]:
+    """手元に保存済みの株価だけを読む（ネットにはつながない）。保存がない銘柄は辞書に入らない。"""
+    prices = {}
+    for code in codes:
+        df = load_cache(cache_path(settings, code))
+        if df is not None and not df.empty:
+            prices[code] = df
+    return prices
+
+
 def update_prices(
-    codes: list[str], settings: dict, quality: QualityLog, now: datetime
+    codes: list[str], settings: dict, quality: QualityLog, now: datetime, full_days: int | None = None
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
-    """全銘柄の株価を最新にする。戻り値は (銘柄コード→株価の表, 取得状況の一覧)。"""
+    """全銘柄の株価を最新にする。戻り値は (銘柄コード→株価の表, 取得状況の一覧)。
+
+    full_days を指定すると、手元のデータの有無に関係なく、その日数分を全銘柄取り直す
+    （後付けの再現のために履歴を長くしたいとき用）。
+    """
     conf = settings["prices"]
     stooq_url = settings["sources"]["stooq_url"]
     today = pd.Timestamp(now.date())
-    full_start = (today - timedelta(days=conf["history_days"])).strftime("%Y-%m-%d")
+    history_days = full_days or conf["history_days"]
+    full_start = (today - timedelta(days=history_days)).strftime("%Y-%m-%d")
 
     caches = {code: load_cache(cache_path(settings, code)) for code in codes}
 
     # 手元にデータがある銘柄は「最後の日 − 重ね日数」から、ない銘柄は全期間を取る
-    new_codes = [c for c in codes if caches[c] is None or caches[c].empty]
+    new_codes = [c for c in codes if full_days or caches[c] is None or caches[c].empty]
     update_codes = [c for c in codes if c not in new_codes]
     fetched: dict[str, pd.DataFrame] = {}
     if new_codes:
@@ -218,7 +233,7 @@ def update_prices(
         source = "yfinance"
 
         if fresh is None:
-            start = full_start if cached is None else (cached.index[-1] - timedelta(days=conf["overlap_days"])).strftime("%Y-%m-%d")
+            start = full_start if (full_days or cached is None) else (cached.index[-1] - timedelta(days=conf["overlap_days"])).strftime("%Y-%m-%d")
             fresh, reason = fetch_stooq(code, start, stooq_url)
             source = "stooq"
             if fresh is not None:
