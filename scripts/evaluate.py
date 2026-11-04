@@ -67,7 +67,7 @@ def main() -> int:
 
     benchmark = settings["benchmark"]["code"]
     codes = sorted(history["code"].unique())
-    prices = load_cached_prices(codes + [benchmark], settings)
+    prices = load_cached_prices(codes + [benchmark], settings, quality)
     if benchmark not in prices:
         print("TOPIX ETF（1306）の株価が手元にありません。先に run_daily.py を実行してください")
         return 1

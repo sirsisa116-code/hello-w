@@ -191,6 +191,77 @@ def find_suspicious_moves(df: pd.DataFrame, max_move: float) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns).sort_values(["date", "kind"]).reset_index(drop=True)
 
 
+SCALE_ERRORS = (10.0, 100.0, 1000.0)
+PRICE_FIELDS = ["open", "high", "low", "close", "adj_close"]
+
+
+def _scale_jump(ratio: float, tolerance: float) -> float | None:
+    """前日比がちょうど10倍・100倍・1000倍（またはその逆）付近なら、その倍率を返す。"""
+    if not ratio > 0:
+        return None
+    for scale in SCALE_ERRORS:
+        for target in (scale, 1 / scale):
+            if abs(ratio / target - 1) <= tolerance:
+                return target
+    return None
+
+
+def repair_scale_glitches(
+    df: pd.DataFrame, max_days: int = 5, tolerance: float = 0.15
+) -> tuple[pd.DataFrame, list[tuple]]:
+    """データ源の「桁ずれ」を直す。
+
+    直す条件（両方を満たすときだけ）:
+      1. 終値が前日の約10倍（100倍・1000倍、またはその逆）に跳ねる
+      2. max_days 営業日以内に、逆の倍率で元の水準に戻る
+    実際の値動きでこうなることはまずない。戻らない場合は本当の株式分割の可能性があるので直さない。
+
+    戻り値: (直した株価, 直した期間の一覧 [(開始日, 終了日, 掛けた倍率)])
+    出来高は直さない（桁ずれしているかどうか判断できないため）。
+    """
+    close = df["close"].to_numpy()
+    out = df.copy()
+    repaired = []
+    i = 1
+    while i < len(close):
+        jump = _scale_jump(close[i] / close[i - 1], tolerance)
+        if jump is None:
+            i += 1
+            continue
+        back_at = None
+        for j in range(i + 1, min(i + max_days, len(close) - 1) + 1):
+            back = _scale_jump(close[j] / close[j - 1], tolerance)
+            if back is not None and abs(back * jump - 1) <= tolerance:
+                back_at = j
+                break
+        if back_at is None:
+            i += 1
+            continue
+
+        rows = out.index[i:back_at]
+        reference = close[i - 1]
+        for field in PRICE_FIELDS:
+            values = out.loc[rows, field]
+            # 値ごとに「元の水準」と「ずれた水準」のどちらに近いかを見て、ずれている値だけ直す
+            # （始値だけ正しい、といった日があっても壊さないため）
+            off = (np.log(values / reference) - np.log(jump)).abs() < np.log(values / reference).abs()
+            out.loc[rows[off.to_numpy()], field] = values[off] / jump
+        out.loc[rows, "source"] = out.loc[rows, "source"].astype(str) + f"(桁ずれ補正×{1 / jump:g})"
+        repaired.append((rows[0].date(), rows[-1].date(), 1 / jump))
+        i = back_at + 1
+    return out, repaired
+
+
+def _repair_and_log(code: str, df: pd.DataFrame, quality: QualityLog | None) -> tuple[pd.DataFrame, bool]:
+    fixed, repaired = repair_scale_glitches(df)
+    if quality is not None:
+        for start, end, factor in repaired:
+            period = f"{start}" if start == end else f"{start}〜{end}"
+            quality.warn(SOURCE, code, f"{period} の株価が桁ずれしていたため ×{factor:g} で補正しました"
+                                       "（データ源の誤り。株価データの source 列に記録）")
+    return fixed, bool(repaired)
+
+
 def check_prices(prices: dict[str, pd.DataFrame], conf: dict, now: datetime, quality: QualityLog) -> pd.Timestamp | None:
     """古さ・長さ・出来高・異常な値動きを点検する。全銘柄の中で一番新しい日付（基準日）を返す。"""
     if not prices:
@@ -223,13 +294,14 @@ def check_prices(prices: dict[str, pd.DataFrame], conf: dict, now: datetime, qua
 
 # ---------- 全体の流れ ----------
 
-def load_cached_prices(codes: list[str], settings: dict) -> dict[str, pd.DataFrame]:
-    """手元に保存済みの株価だけを読む（ネットにはつながない）。保存がない銘柄は辞書に入らない。"""
+def load_cached_prices(codes: list[str], settings: dict, quality: QualityLog | None = None) -> dict[str, pd.DataFrame]:
+    """手元に保存済みの株価だけを読む（ネットにはつながない）。保存がない銘柄は辞書に入らない。
+    桁ずれは読み込んだ時点で直す（保存し直すのは run_daily.py の役目）。"""
     prices = {}
     for code in codes:
         df = load_cache(cache_path(settings, code))
         if df is not None and not df.empty:
-            prices[code] = df
+            prices[code], _ = _repair_and_log(code, df, quality)
     return prices
 
 
@@ -278,7 +350,7 @@ def update_prices(
                     quality.error(SOURCE, code, f"yfinance・Stooq とも取得失敗、手元にもデータなし（Stooq: {reason}）")
                     continue
                 quality.error(SOURCE, code, f"yfinance・Stooq とも取得失敗。手元の {cached.index[-1].date()} までのデータで続行します（Stooq: {reason}）")
-                prices[code] = cached
+                prices[code], _ = _repair_and_log(code, cached, quality)
                 sources[code] = "手元のみ"
                 continue
 
@@ -299,6 +371,7 @@ def update_prices(
         merged, dropped = drop_unfinished_today(merged, now, conf["market_close_jst"])
         if dropped:
             quality.info(SOURCE, code, f"{conf['market_close_jst']} 前の実行のため、当日分は未確定として除外しました")
+        merged, _ = _repair_and_log(code, merged, quality)
 
         save_cache(cache_path(settings, code), merged)
         prices[code] = merged

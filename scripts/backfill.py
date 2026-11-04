@@ -50,7 +50,7 @@ def main() -> int:
         print(f"株価を {args.fetch_days} 日分取り直しています…（銘柄数が多いと数分かかります）")
         prices, _ = update_prices(codes, settings, quality, now, full_days=args.fetch_days)
     else:
-        prices = load_cached_prices(codes, settings)
+        prices = load_cached_prices(codes, settings, quality)
         for code in codes:
             if code not in prices:
                 quality.error("backfill", code, "手元に株価がありません。先に run_daily.py か --fetch-days 付きで実行してください")

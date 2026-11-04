@@ -5,6 +5,7 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from kabu.config import JST
 from kabu.data.prices import (
@@ -116,3 +117,32 @@ def test_check_prices_warns_on_suspicious_move():
     quality = QualityLog()
     check_prices(prices, CONF, now, quality)
     assert any("異常に大きな値動き" in i.message for i in quality.issues)
+
+
+def test_repair_scale_glitch_two_days():
+    """実際に起きた例: TOPIX ETF が2日間だけ 1/10 の値になっていた。"""
+    from kabu.data.prices import repair_scale_glitches
+    df = make_prices(["2026-03-26", "2026-03-27", "2026-03-30", "2026-03-31", "2026-04-01"],
+                     [380.0, 382.7, 37.64, 37.14, 389.2])
+    df.loc["2026-03-30", "open"] = 37.0
+    fixed, repaired = repair_scale_glitches(df)
+    assert repaired == [(pd.Timestamp("2026-03-30").date(), pd.Timestamp("2026-03-31").date(), 10.0)]
+    assert list(fixed["close"].round(1)) == [380.0, 382.7, 376.4, 371.4, 389.2]
+    assert fixed.loc["2026-03-30", "open"] == pytest.approx(370.0)
+    assert "桁ずれ補正" in fixed.loc["2026-03-30", "source"]
+    assert fixed.loc["2026-03-27", "source"] == "test"
+
+
+def test_repair_leaves_real_split_alone():
+    """水準が変わったまま戻らないもの（本当の株式分割の可能性）は直さない。"""
+    from kabu.data.prices import repair_scale_glitches
+    df = make_prices(["2026-03-26", "2026-03-27", "2026-03-30", "2026-03-31", "2026-04-01"],
+                     [1000.0, 1010.0, 101.0, 102.0, 103.0])
+    fixed, repaired = repair_scale_glitches(df)
+    assert repaired == [] and list(fixed["close"]) == [1000.0, 1010.0, 101.0, 102.0, 103.0]
+
+
+def test_repair_ignores_normal_moves():
+    from kabu.data.prices import repair_scale_glitches
+    df = make_prices(["2026-03-26", "2026-03-27", "2026-03-30"], [1000.0, 1200.0, 1000.0])
+    assert repair_scale_glitches(df)[1] == []
