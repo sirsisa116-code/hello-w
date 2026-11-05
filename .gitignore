@@ -2,6 +2,9 @@
 /data/
 /output/
 
+# ログイン情報・トークン（絶対に GitHub に上げない）
+/config/local/
+
 # Python が自動で作るファイル
 __pycache__/
 *.pyc
