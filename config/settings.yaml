@@ -71,10 +71,15 @@ xbrl:
   retention_days: 31       # TDnet に資料が置かれている日数の目安。この日数分さかのぼって、未取得のものを取る
   pause_seconds: 1.0       # 問い合わせの間の待ち時間
 
+# --- J-Quants（過去の決算データ。無料プランは12週間遅れ・約2年分）---
+jquants:
+  pause_seconds: 13        # 無料プランは1分5回まで。短くしないこと
+
 # --- 保存先（このフォルダからの相対パス）---
 paths:
   raw_prices: data/raw/prices
   raw_tdnet: data/raw/tdnet
+  raw_jquants: data/raw/jquants   # J-Quants から取った決算データ
   xbrl: data/xbrl                 # XBRL から取り出した決算の主要な数字（TDnet から消えるので大事に保存）
   jpx_list: data/raw/jpx_list.xlsx
   daily_output: output/daily

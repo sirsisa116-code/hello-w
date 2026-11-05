@@ -16,6 +16,8 @@ import pandas as pd
 
 from kabu.evaluation import CONFIRMED, forward_returns, t_value, total_return_prices
 
+MIN_DATES_FOR_T = 10   # t値を出すのに必要な「出来事のあった日」の数
+
 
 def base_date(pubdate: pd.Timestamp) -> pd.Timestamp:
     """開示の「基準日」= この日の終値までは開示前、という日。
@@ -77,7 +79,9 @@ def summarize_events(results: pd.DataFrame, horizons: list[int]) -> pd.DataFrame
         for n in horizons:
             done = g[g[f"status_{n}"] == CONFIRMED]
             excess = done[f"excess_{n}"]
-            t, _ = t_value(done.groupby("data_date")[f"excess_{n}"].mean())
+            by_date = done.groupby("data_date")[f"excess_{n}"].mean()
+            # 出来事のあった日が少ないと、日ごとの平均から出す t値は偶然で大きく振れるので出さない
+            t = t_value(by_date)[0] if len(by_date) >= MIN_DATES_FOR_T else np.nan
             row[f"{n}日後 件数"] = len(done)
             row[f"{n}日後 平均(%)"] = excess.mean()
             row[f"{n}日後 中央値(%)"] = excess.median()
@@ -87,13 +91,30 @@ def summarize_events(results: pd.DataFrame, horizons: list[int]) -> pd.DataFrame
     return pd.DataFrame(rows).sort_values("件数", ascending=False).reset_index(drop=True)
 
 
+def summary_lines(summary: pd.DataFrame, horizons: list[int], heading: str) -> list[str]:
+    """画面に出す集計表（中央値と t値）。"""
+    short, long = horizons[1] if len(horizons) > 1 else horizons[0], horizons[-1]
+
+    def fmt(v, d=2):
+        return "—" if pd.isna(v) else f"{v:+.{d}f}"
+
+    lines = [f"=== {heading}（TOPIX ETF との差、中央値） ===",
+             f"{'種類':<30}{'件数':>6}{'反応(買う前)':>12}{f'{short}日後':>9}{'t値':>7}{f'{long}日後':>9}{'t値':>7}"]
+    for r in summary.to_dict("records"):
+        lines.append(f"{r['label'][:28]:<30}{r['件数']:>6}{fmt(r['反応（買う前）中央値(%)']):>11}%"
+                     f"{fmt(r[f'{short}日後 中央値(%)']):>8}%{fmt(r[f'{short}日後 t値']):>7}"
+                     f"{fmt(r[f'{long}日後 中央値(%)']):>8}%{fmt(r[f'{long}日後 t値']):>7}")
+    lines.append("  ※ t値の絶対値が2未満なら、偶然でも普通に出る程度の差です")
+    return lines
+
+
 def build_event_report(summary: pd.DataFrame, horizons: list[int], period: tuple, universe_label: str,
-                       notes: list[str]) -> str:
+                       notes: list[str], title: str = "適時開示の種類ごとの値動き（イベントスタディ）") -> str:
     def f(v, digits=2, sign=True):
         return "—" if pd.isna(v) else (f"{v:+.{digits}f}" if sign else f"{v:.{digits}f}")
 
     lines = [
-        "# 適時開示の種類ごとの値動き（イベントスタディ）",
+        f"# {title}",
         "",
         f"- 対象の開示: {period[0]} 〜 {period[1]}（対象銘柄の範囲: {universe_label}）",
         "- 反応（買う前）: 開示前の最後の終値 → 買える最初の始値。翌朝に買う前提では取れない部分",
@@ -108,7 +129,7 @@ def build_event_report(summary: pd.DataFrame, horizons: list[int], period: tuple
         lines += [
             f"## {n}営業日後",
             "",
-            "| 開示の種類 | 件数 | 反応（買う前）中央値 | 平均 | 中央値 | 市場に勝った割合 | t値 |",
+            "| 種類 | 件数 | 反応（買う前）中央値 | 平均 | 中央値 | 市場に勝った割合 | t値 |",
             "|---|---:|---:|---:|---:|---:|---:|",
         ]
         for r in summary.to_dict("records"):
@@ -122,7 +143,9 @@ def build_event_report(summary: pd.DataFrame, horizons: list[int], period: tuple
         "---",
         "読み方の注意:",
         "",
-        "- t値は、同じ日の開示を平均してから計算しています。絶対値が2未満なら、偶然でも普通に出る程度の差です。",
+        "- t値は、同じ日の出来事を平均してから計算しています。絶対値が2未満なら、偶然でも普通に出る程度の差です。",
+        f"- 出来事のあった日が {MIN_DATES_FOR_T} 日分未満の種類は、t値を出していません（— と表示）。",
+        "- 決算の時期に出来事が集中するため、N日後の期間が重なる出来事どうしは独立ではありません。t値は実際より大きめに出ます。",
         "- 件数が数十件以下の種類は、結果が大きくぶれます。",
         "- 銘柄は「今の」対象銘柄なので、上場廃止になった銘柄などが入っていません。",
         "- タイトルだけで分類しているので、中身（修正の大きさなど）は区別していません。",

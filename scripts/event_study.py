@@ -22,7 +22,7 @@ from kabu.data.disclosures import prepare_disclosure_events  # noqa: E402
 from kabu.data.prices import load_cached_prices  # noqa: E402
 from kabu.data.universe import build_universe, universe_label  # noqa: E402
 from kabu.evaluation import codes_without_dividends  # noqa: E402
-from kabu.event_study import build_event_report, event_returns, summarize_events  # noqa: E402
+from kabu.event_study import build_event_report, event_returns, summarize_events, summary_lines  # noqa: E402
 from kabu.quality import QualityLog  # noqa: E402
 from kabu.scoring import load_weights  # noqa: E402
 
@@ -77,16 +77,7 @@ def main() -> int:
     report_path.write_text(report, encoding="utf-8-sig")
     results.to_csv(detail_path, index=False, encoding="utf-8-sig")
 
-    short, long = horizons[1] if len(horizons) > 1 else horizons[0], horizons[-1]
-    print(f"=== 開示の種類ごとの値動き（TOPIX ETF との差、中央値） ===")
-    print(f"{'開示の種類':<24}{'件数':>6}{'反応(買う前)':>12}{f'{short}日後':>9}{'t値':>7}{f'{long}日後':>9}{'t値':>7}")
-    for r in summary.to_dict("records"):
-        def fmt(v, d=2):
-            return "—" if pd.isna(v) else f"{v:+.{d}f}"
-        print(f"{r['label'][:22]:<24}{r['件数']:>6}{fmt(r['反応（買う前）中央値(%)']):>11}%"
-              f"{fmt(r[f'{short}日後 中央値(%)']):>8}%{fmt(r[f'{short}日後 t値']):>7}"
-              f"{fmt(r[f'{long}日後 中央値(%)']):>8}%{fmt(r[f'{long}日後 t値']):>7}")
-    print("  ※ t値の絶対値が2未満なら、偶然でも普通に出る程度の差です")
+    print("\n".join(summary_lines(summary, horizons, "開示の種類ごとの値動き")))
     print("--- データの問題 ---")
     for line in quality.summary_lines():
         print(line)

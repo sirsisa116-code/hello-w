@@ -87,6 +87,19 @@ python scripts/event_study.py --start 2025-11-01  # 期間を指定
 
 開示の分類の決まり（どの言葉なら何点か）は `config/weights.yaml` の `disclosure` にあります。
 
+## 会社予想の変化のあとの値動き（J-Quants を使う）
+
+J-Quants（日本取引所グループの公式 API、無料プラン）の過去約2年分の決算データから、業績予想の修正・本決算の上振れ下振れ・
+来期予想の伸びを取り出し、そのあと株価がどう動いたかを集計します。
+
+```powershell
+python scripts/guidance_study.py              # 初回は約500銘柄分を取るので1時間半以上かかる（途中で止めても続きから取れる）
+python scripts/guidance_study.py --no-fetch   # 取り終わったあと、保存済みの分だけで集計し直す
+```
+
+初回は J-Quants の APIキー を聞かれます（ダッシュボードで発行したもの）。キーは `config\local\jquants_api_key.txt` に保存され、
+GitHub には上がりません。漏れたかもしれないときは、ダッシュボードでキーを作り直し、このファイルを消してください。
+
 ## 後付けの再現（過去のランキングを今から作る）
 
 毎日のランキングは始めた日からしかたまらないので、過去の各営業日について同じ計算をやり直し、`output/history_backfill.csv` に保存します。毎日の `history.csv` とは混ぜません。
