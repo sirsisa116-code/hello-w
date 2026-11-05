@@ -7,12 +7,19 @@
 その日の開示が何件取れるかを1回ずつ問い合わせる（全部で10回ほど、各2秒の間隔をあける）。
 最後に、取れた開示の1件分の中身をそのまま表示する（どんな項目があるかを確かめるため）。
 
+開示が多い日に、1回の問い合わせで全部取れるか（途中で切れないか）を調べる:
+    python scripts/probe_tdnet.py --day 20260514
+件数の上限を 100・1000・10000 と変えて同じ日を3回問い合わせ、返ってくる件数・時刻の範囲・
+1時間ごとの件数などを表示する。日付を省略すると、決算発表が集中しやすい 2026-05-14 と 2026-05-15 を調べる。
+
 何も保存しない・何も書き換えない。調べた結果は画面に出すだけ。
 """
 
+import argparse
 import json
 import sys
 import time
+from collections import Counter
 from datetime import date, timedelta
 
 import requests
@@ -68,7 +75,60 @@ def count_items(data: dict) -> tuple[int | None, int]:
     return total, len(items)
 
 
+def unwrap(item: dict) -> dict:
+    """1件分は {"Tdnet": {...}} の形で入っているので、中身を取り出す。"""
+    return item.get("Tdnet", item) if isinstance(item, dict) else {}
+
+
+def probe_busy_day(day: str) -> None:
+    print(f"=== {day} の開示を、件数の上限を変えて問い合わせ ===")
+    biggest = None
+    for i, limit in enumerate((100, 1000, 10000)):
+        if i > 0:
+            time.sleep(PAUSE_SECONDS)
+        data, error = fetch(day, limit=limit)
+        if data is None:
+            print(f"  上限 {limit:>5}: 失敗 … {error}")
+            continue
+        total, returned = count_items(data)
+        print(f"  上限 {limit:>5}: 受け取った {returned}件 / total_count {total}")
+        if biggest is None or returned > len(biggest.get("items") or []):
+            biggest = data
+    if not biggest or not biggest.get("items"):
+        print("  開示を受け取れませんでした")
+        return
+
+    items = [unwrap(i) for i in biggest["items"]]
+    times = sorted(i.get("pubdate", "") for i in items)
+    days = Counter(t[:10] for t in times)
+    hours = Counter(t[11:13] for t in times if t[:10] == f"{day[:4]}-{day[4:6]}-{day[6:]}")
+    ids = [i.get("id") for i in items]
+    print(f"  一番多く受け取った回の件数: {len(items)}件（id の重複 {len(ids) - len(set(ids))}件）")
+    print(f"  時刻の範囲: {times[0]} 〜 {times[-1]}")
+    print(f"  日付ごとの件数: {dict(sorted(days.items()))}")
+    print(f"  {day} の1時間ごとの件数: {dict(sorted(hours.items()))}")
+    with_xbrl = [i for i in items if i.get("url_xbrl")]
+    print(f"  XBRL（決算データ）付きの開示: {len(with_xbrl)}件")
+    print(f"  応答の actions: {json.dumps(biggest.get('actions'), ensure_ascii=False)[:300]}")
+    print(f"  応答の condition_desc: {biggest.get('condition_desc')}")
+    if with_xbrl:
+        print("  --- XBRL 付き開示の例（そのまま）---")
+        print(json.dumps(with_xbrl[0], ensure_ascii=False, indent=2))
+    print()
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description="TDnet WebAPI の確認")
+    parser.add_argument("--day", nargs="?", const="busy", help="開示が多い日を調べる（例: --day 20260514）")
+    args = parser.parse_args()
+    if args.day:
+        days = ["20260514", "20260515"] if args.day == "busy" else [args.day]
+        for i, day in enumerate(days):
+            if i > 0:
+                time.sleep(PAUSE_SECONDS)
+            probe_busy_day(day)
+        return 0
+
     today = date.today()
     print(f"調査日: {today}  問い合わせ先: {BASE_URL}")
     print("-" * 60)
