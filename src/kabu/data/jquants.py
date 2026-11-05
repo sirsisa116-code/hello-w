@@ -1,25 +1,27 @@
-"""J-Quants API（日本取引所グループの公式 API）を使うための部品。
+"""J-Quants API（日本取引所グループの公式 API、V2）を使うための部品。
 
-ログインの流れ:
-  1. メールアドレスとパスワードで「リフレッシュトークン」をもらう（1週間有効）
-  2. リフレッシュトークンで「ID トークン」をもらう（24時間有効）。データを取るときはこれを使う
+V2 は、J-Quants のダッシュボードで発行する「APIキー」を x-api-key ヘッダーに付けて使う。
+（2025年12月22日以降の登録者は V2 しか使えない。V1 のメールアドレス・パスワードでのログインは使えない）
 
-パスワードは保存しない。リフレッシュトークンだけを config/local/jquants_token.json に保存する
-（config/local/ は .gitignore で GitHub に上げないようにしてある）。
-トークンが期限切れなら、画面でメールアドレスとパスワードを聞き直す。
+APIキーの置き場所（上から順に探す）:
+  1. 環境変数 JQUANTS_API_KEY
+  2. config/local/jquants_api_key.txt（.gitignore で GitHub に上げないようにしてある）
+  3. どちらもなければ画面で聞いて、2 に保存する（入力は画面に表示しない）
+
+無料プランは1分あたり5回までしか問い合わせできないので、問い合わせの間に pause_seconds（既定13秒）あける。
 """
 
 import getpass
-import json
-from datetime import datetime, timedelta
+import os
+import time
 
 import requests
 
 from kabu.config import resolve_path
 
-BASE_URL = "https://api.jquants.com/v1"
-TOKEN_FILE = "config/local/jquants_token.json"
-REFRESH_TOKEN_DAYS = 6   # 有効期限は1週間だが、余裕をもって6日で取り直す
+BASE_URL = "https://api.jquants.com/v2"
+KEY_FILE = "config/local/jquants_api_key.txt"
+DEFAULT_PAUSE_SECONDS = 13.0   # 無料プランは毎分5回まで → 12秒より長くあける
 
 
 class JQuantsError(Exception):
@@ -27,70 +29,68 @@ class JQuantsError(Exception):
 
 
 def _describe(response: requests.Response) -> str:
-    """失敗したときの説明。トークンが入っている可能性があるので、成功した応答の中身は出さない。"""
-    return f"HTTP {response.status_code}: {response.text[:300]}"
+    hint = ""
+    if response.status_code in (401, 403):
+        hint = "（APIキーが違うか、今のプランでは使えないデータの可能性があります）"
+    elif response.status_code == 429:
+        hint = "（問い合わせが多すぎます。少し待ってからやり直してください）"
+    return f"HTTP {response.status_code}{hint}: {response.text[:300]}"
 
 
-def _load_refresh_token() -> str | None:
-    path = resolve_path(TOKEN_FILE)
-    if not path.exists():
-        return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    saved_at = datetime.fromisoformat(data["saved_at"])
-    if datetime.now() - saved_at > timedelta(days=REFRESH_TOKEN_DAYS):
-        return None
-    return data["refresh_token"]
-
-
-def _save_refresh_token(token: str) -> None:
-    path = resolve_path(TOKEN_FILE)
+def get_api_key(ask: bool = True) -> str:
+    """APIキーを返す。なければ画面で聞いて保存する（ask=False なら聞かずにエラー）。"""
+    key = os.environ.get("JQUANTS_API_KEY", "").strip()
+    if key:
+        return key
+    path = resolve_path(KEY_FILE)
+    if path.exists():
+        key = path.read_text(encoding="utf-8").strip()
+        if key:
+            return key
+    if not ask:
+        raise JQuantsError(f"APIキーがありません。{KEY_FILE} に保存するか、環境変数 JQUANTS_API_KEY を設定してください")
+    print("J-Quants のダッシュボードで発行した APIキー を貼り付けて Enter を押してください")
+    key = getpass.getpass("  APIキー（貼り付けても表示されません）: ").strip()
+    if not key:
+        raise JQuantsError("APIキーが入力されませんでした")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"refresh_token": token, "saved_at": datetime.now().isoformat(timespec="seconds")}),
-                    encoding="utf-8")
+    path.write_text(key, encoding="utf-8")
+    print(f"  APIキーを {path} に保存しました（GitHub には上がりません）")
+    return key
 
 
-def login_interactively() -> str:
-    """画面でメールアドレスとパスワードを聞いて、リフレッシュトークンをもらう。"""
-    print("J-Quants にログインします（パスワードは保存しません）")
-    mail = input("  メールアドレス: ").strip()
-    password = getpass.getpass("  パスワード（入力しても表示されません）: ")
-    response = requests.post(f"{BASE_URL}/token/auth_user",
-                             json={"mailaddress": mail, "password": password}, timeout=30)
-    if response.status_code != 200:
-        raise JQuantsError(f"ログインできませんでした。{_describe(response)}")
-    token = response.json().get("refreshToken")
-    if not token:
-        raise JQuantsError("ログインの応答に refreshToken がありませんでした（API の仕様が変わった可能性）")
-    _save_refresh_token(token)
-    return token
+def forget_api_key() -> None:
+    """保存したAPIキーを消す（キーが違っていたときに、次回また聞き直すため）。"""
+    path = resolve_path(KEY_FILE)
+    if path.exists():
+        path.unlink()
 
 
-def get_id_token() -> str:
-    """データを取るための ID トークンをもらう。必要なら画面でログインし直す。"""
-    refresh = _load_refresh_token() or login_interactively()
-    response = requests.post(f"{BASE_URL}/token/auth_refresh", params={"refreshtoken": refresh}, timeout=30)
-    if response.status_code != 200:
-        # 保存してあったトークンが使えなくなっていた → ログインし直して、もう一度だけ試す
-        refresh = login_interactively()
-        response = requests.post(f"{BASE_URL}/token/auth_refresh", params={"refreshtoken": refresh}, timeout=30)
-        if response.status_code != 200:
-            raise JQuantsError(f"ID トークンをもらえませんでした。{_describe(response)}")
-    token = response.json().get("idToken")
-    if not token:
-        raise JQuantsError("応答に idToken がありませんでした（API の仕様が変わった可能性）")
-    return token
+def _list_in(data: dict, key: str | None) -> list:
+    """応答の中のデータの一覧を取り出す。キー名が分からないときは、最初に見つかった一覧を使う。"""
+    if key and isinstance(data.get(key), list):
+        return data[key]
+    for value in data.values():
+        if isinstance(value, list):
+            return value
+    return []
 
 
-def get_all(path: str, params: dict, id_token: str, key: str) -> list[dict]:
-    """データを取る。件数が多いと pagination_key で分割されて返ってくるので、全部つなげる。"""
-    rows, params = [], dict(params)
+def get_all(path: str, params: dict, api_key: str, key: str | None = None,
+            pause: float = DEFAULT_PAUSE_SECONDS, sleep=time.sleep) -> tuple[list[dict], dict]:
+    """データを取る。件数が多いと pagination_key で分割されて返ってくるので、全部つなげる。
+    戻り値: (データの一覧, 最初の応答そのもの（一覧以外のキーを確かめるため）)"""
+    rows, params, first, calls = [], dict(params), None, 0
     while True:
-        response = requests.get(f"{BASE_URL}{path}", params=params,
-                                headers={"Authorization": f"Bearer {id_token}"}, timeout=60)
+        if calls > 0:
+            sleep(pause)
+        calls += 1
+        response = requests.get(f"{BASE_URL}{path}", params=params, headers={"x-api-key": api_key}, timeout=60)
         if response.status_code != 200:
             raise JQuantsError(f"{path} を取得できませんでした。{_describe(response)}")
         data = response.json()
-        rows += data.get(key, [])
+        first = first if first is not None else data
+        rows += _list_in(data, key)
         if not data.get("pagination_key"):
-            return rows
+            return rows, first
         params["pagination_key"] = data["pagination_key"]
