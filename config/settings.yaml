@@ -47,6 +47,7 @@ sources:
   # このページに載っているリンクを毎回たどってダウンロードする。
   jpx_list_page: https://www.jpx.co.jp/markets/statistics-equities/misc/01.html
   stooq_url: https://stooq.com/q/d/l/
+  tdnet_url: https://webapi.yanoshin.jp/webapi/tdnet/list   # 適時開示（非公式・個人運営の無料サービス）
 
 # --- 株価取得 ---
 prices:
@@ -61,9 +62,14 @@ prices:
   max_daily_move: 0.3      # 1日の値動きがこれ（30%）を超えたら「異常な値動き」として警告する
   suspicious_check_rows: 30  # 毎日の実行で異常な値動きを点検する直近の日数
 
+# --- 適時開示 ---
+disclosures:
+  pause_seconds: 1.0       # 問い合わせの間の待ち時間（相手は個人運営なので、短くしないこと）
+
 # --- 保存先（このフォルダからの相対パス）---
 paths:
   raw_prices: data/raw/prices
+  raw_tdnet: data/raw/tdnet
   jpx_list: data/raw/jpx_list.xlsx
   daily_output: output/daily
   history: output/history.csv

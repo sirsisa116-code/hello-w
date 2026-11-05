@@ -6,15 +6,16 @@
 # 注意: 下の点数は一般的な使われ方を参考にした仮の値で、効果は検証していません。
 #       段階3の事後検証で当たり外れを見ながら調整していく前提です。
 
-version: 1
+version: 2   # 2: 適時開示を追加
 
 # --- 分野ごとの重み ---
 # 総合点 = 各分野の点数（0〜100、50が中立）を重みで平均したもの。
 # 重み0の分野は使わない。データが取れなかった分野は除いて、残りの重みで計算し直す。
 category_weights:
   technical: 1.0
+  disclosure: 1.0    # 適時開示（タイトルによる機械的な分類）
   fundamental: 0     # 段階4で設定する
-  news: 0            # 段階5で設定する
+  news: 0            # ニュースの Claude 判定（後で設定する）
 
 # --- ランキングに入れる条件 ---
 filters:
@@ -65,3 +66,30 @@ technical:
       - {min: -10, points: 4, note: 52週高値まで10%以内}
       - {min: -30, points: 0, note: 52週高値から10〜30%下}
       - {points: -4, note: 52週高値から30%以上下}
+
+# --- 適時開示の点数ルール ---
+# 分野の点数 = 50 + Σ（下の points × 日がたつほど小さくなる重み）を 0〜100 に収める。
+# 重みは開示当日が1で、decay_days 日（カレンダー日）で0になる。
+# タイトルに include のどれかを含み、exclude のどれも含まないと当てはまる（ただの文字列で、正規表現ではない）。
+# 1件の開示が複数の決まりに当てはまることもある（例: 上方修正と増配）。
+# points: 0 の決まりは点数には効かず、レポートに「こういう開示があった」と表示するためのもの。
+disclosure:
+  decay_days: 14
+  ignore: [訂正]       # これを含むタイトルは無視する（過去の開示の訂正なので）
+  rules:
+    - {category: upward_revision, label: 上方修正, points: 8, include: [上方修正]}
+    - {category: downward_revision, label: 下方修正, points: -8, include: [下方修正]}
+    - {category: revision_unknown, label: 業績予想の修正（方向は本文を見ないと不明）, points: 0,
+       include: [業績予想の修正, 業績予想修正], exclude: [上方, 下方]}
+    - {category: dividend_up, label: 増配・復配, points: 4, include: [増配, 復配, 記念配当, 特別配当]}
+    - {category: dividend_down, label: 減配・無配, points: -6, include: [減配, 無配], exclude: [復配]}
+    - {category: buyback, label: 自社株買い, points: 5,
+       include: [自己株式の取得, 自己株式取得, 自社株買い, 自己株式の公開買付け], exclude: [状況, 結果, 終了, 完了]}
+    - {category: split, label: 株式分割, points: 2, include: [株式分割], exclude: [株式分割に伴う]}
+    - {category: dilution, label: 増資・株式の売出し, points: -6,
+       include: [新株式発行, 公募, 第三者割当, 株式の売出し, 新株予約権の発行],
+       exclude: [ストック・オプション, ストックオプション, 譲渡制限付株式, 株式報酬]}
+    - {category: misconduct, label: 不祥事・調査, points: -8,
+       include: [不適切, 不正, 第三者委員会, 特別調査委員会, 行政処分, 業務改善命令, 課徴金]}
+    - {category: impairment, label: 特別損失・減損, points: -3, include: [特別損失, 減損損失]}
+    - {category: earnings, label: 決算発表（中身はまだ評価していない）, points: 0, include: [決算短信]}

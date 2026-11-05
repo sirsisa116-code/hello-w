@@ -7,7 +7,7 @@
   - 銘柄は「今の」対象銘柄を使う。途中で上場廃止になった銘柄や、
     今は条件から外れた銘柄が入らないので、成績が良く見えやすい
     （TOPIX500 なら「今500位以内に入っている＝これまで株価が上がってきた」銘柄に偏る）
-  - ニュースは過去にさかのぼれないので、テクニカル（と将来のファンダメンタル）だけ
+  - ニュース記事は過去にさかのぼれないので使わない（適時開示は過去分も取れるので使う）
 """
 
 from datetime import datetime
@@ -34,6 +34,8 @@ def backfill(
     run_at: datetime,
     universe_label: str,
     progress=print,
+    disclosure_events: dict[str, pd.DataFrame] | None = None,
+    disclosure_failed: list | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """各日付のランキングを作り、history.csv と同じ形の表にして返す。
     戻り値は (ランキングの履歴, 日ごとの記録: 何銘柄入ったか・指標の欠損が何件あったか)。"""
@@ -42,7 +44,8 @@ def backfill(
     series = {code: compute_indicator_series(df) for code, df in prices.items()}
     for i, date in enumerate(dates, 1):
         quality = QualityLog()  # 日ごとの警告は件数だけ数える（全部出すと多すぎるため）
-        ranking, _, excluded = rank_stocks(universe, prices, date, weights, quality, series)
+        ranking, _, excluded = rank_stocks(universe, prices, date, weights, quality, series,
+                                           disclosure_events, disclosure_failed)
         log.append({"data_date": date.date(), "ranked": len(ranking), "excluded": len(excluded),
                     "missing_indicator_warnings": quality.count("WARN")})
         if not ranking.empty:

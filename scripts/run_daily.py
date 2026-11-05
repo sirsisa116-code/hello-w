@@ -14,12 +14,14 @@
 """
 
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 # src フォルダの中の kabu を import できるようにする
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from kabu.config import load_settings, now_jst, resolve_path  # noqa: E402
+from kabu.data.disclosures import prepare_disclosure_events  # noqa: E402
 from kabu.data.prices import update_prices  # noqa: E402
 from kabu.data.universe import build_universe, universe_label  # noqa: E402
 from kabu.quality import QualityLog  # noqa: E402
@@ -59,7 +61,15 @@ def main() -> int:
         data_date = max(df.index[-1] for df in prices.values())
         print(f"データ基準日: {data_date:%Y-%m-%d}。点数を計算しています…")
         stock_prices = {c: df for c, df in prices.items() if c != benchmark}
-        ranking, details, excluded = rank_stocks(universe, stock_prices, data_date, weights, quality)
+        events, failed = None, None
+        if weights["category_weights"].get("disclosure", 0) > 0:
+            decay = weights["disclosure"]["decay_days"]
+            start = (data_date - timedelta(days=decay + 2)).date()
+            events, failed, _ = prepare_disclosure_events(start, now.date(), settings, weights["disclosure"], quality, now.date())
+            print(f"適時開示: {now:%Y-%m-%d %H:%M} 時点までに出た分を使います"
+                  "（これより後に出た今日の開示は、次回のランキングに入ります）")
+        ranking, details, excluded = rank_stocks(universe, stock_prices, data_date, weights, quality,
+                                                 disclosure_events=events, disclosure_failed=failed)
 
         stamp = data_date.strftime("%Y-%m-%d")
         save_ranking_csv(ranking, out_dir / f"{stamp}_ranking.csv")

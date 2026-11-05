@@ -5,7 +5,6 @@
 レポートで「スコアの根拠」として表示する。
 """
 
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -13,30 +12,14 @@ import pandas as pd
 import yaml
 
 from kabu.analysis.technical import INDICATORS, compute_indicator_series, indicators_at
+from kabu.analysis.disclosure import score_disclosures
 from kabu.config import PROJECT_ROOT
 from kabu.quality import QualityLog
+from kabu.scoring_types import CategoryScore, Contribution  # noqa: F401  （ほかのファイルからも、ここ経由で使えるように）
 
 SOURCE = "scoring"
-CATEGORY_LABELS = {"technical": "テクニカル", "fundamental": "ファンダメンタル", "news": "ニュース"}
+CATEGORY_LABELS = {"technical": "テクニカル", "disclosure": "適時開示", "fundamental": "ファンダメンタル", "news": "ニュース"}
 NEUTRAL = 50.0
-
-
-@dataclass
-class Contribution:
-    key: str
-    label: str
-    value: float
-    value_text: str
-    points: float
-    note: str
-
-
-@dataclass
-class CategoryScore:
-    name: str
-    score: float | None                 # None は「欠損」（データ不足で点数を付けられない）
-    contributions: list[Contribution] = field(default_factory=list)
-    missing: list[str] = field(default_factory=list)   # 計算できなかった指標の表示名
 
 
 def load_weights(path: Path | None = None) -> dict:
@@ -101,7 +84,9 @@ def combine(categories: dict[str, CategoryScore], category_weights: dict) -> tup
 def _reason_text(contributions: list[Contribution], positive: bool, limit: int = 3) -> str:
     picked = [c for c in contributions if (c.points > 0 if positive else c.points < 0)]
     picked.sort(key=lambda c: abs(c.points), reverse=True)
-    return " / ".join(f"{c.label} {c.value_text} ({c.points:+.0f})" for c in picked[:limit])
+    # 値が長いもの（開示のタイトルなど）は理由の一覧では省き、表示名だけにする
+    return " / ".join(f"{c.label} {c.value_text} ({c.points:+.0f})" if len(c.value_text) <= 10
+                      else f"{c.label} ({c.points:+.0f})" for c in picked[:limit])
 
 
 def rank_stocks(
@@ -111,11 +96,16 @@ def rank_stocks(
     weights: dict,
     quality: QualityLog,
     indicator_series: dict[str, pd.DataFrame] | None = None,
+    disclosure_events: dict[str, pd.DataFrame] | None = None,
+    disclosure_failed: list | None = None,
 ) -> tuple[pd.DataFrame, dict[str, dict[str, CategoryScore]], pd.DataFrame]:
     """全銘柄に点数を付けて並べる。
 
     indicator_series に銘柄ごとの compute_indicator_series の結果を渡すと、計算し直さずに使う
     （後付けの再現で同じ銘柄を何百日分も計算するときに速くするため）。
+    disclosure_events は、分類済みの適時開示を銘柄ごとに分けたもの（analysis.disclosure.group_by_code）。
+    disclosure_failed は、開示を取れなかった日の一覧。適時開示の重みが0より大きいのに
+    disclosure_events を渡さなかった場合、適時開示は「欠損」になる。
 
     戻り値:
       ranking:  点数順に並べた表
@@ -155,6 +145,9 @@ def rank_stocks(
             continue
 
         categories = {"technical": score_technical(ind, weights["technical"])}
+        if disclosure_events is not None:
+            categories["disclosure"] = score_disclosures(
+                disclosure_events.get(code), reference, weights["disclosure"], disclosure_failed or [])
         total, used, missing = combine(categories, weights["category_weights"])
         if total is None:
             exclude("点数を付けられる分野がない（データ不足）")
@@ -163,6 +156,11 @@ def rank_stocks(
         technical = categories["technical"]
         if technical.missing:
             quality.warn(SOURCE, code, f"計算できない指標があり点数0で扱いました: {', '.join(technical.missing)}")
+        disclosure = categories.get("disclosure")
+        all_contributions = [c for cat in categories.values() for c in cat.contributions]
+        missing_text = [CATEGORY_LABELS[m] for m in missing if m not in categories] + technical.missing
+        if disclosure is not None:
+            missing_text += disclosure.missing
 
         details[code] = categories
         row = {
@@ -171,12 +169,13 @@ def rank_stocks(
             "sector33": sector,
             "total_score": round(total, 1),
             "technical_score": None if technical.score is None else round(technical.score, 1),
+            "disclosure_score": None if disclosure is None or disclosure.score is None else round(disclosure.score, 1),
             "close": ind["close"],
             "day_change_pct": round(ind["day_change_pct"], 2),
             "turnover20_oku": round(ind["turnover20_oku"], 1),
-            "plus_reasons": _reason_text(technical.contributions, positive=True),
-            "minus_reasons": _reason_text(technical.contributions, positive=False),
-            "missing": " / ".join([CATEGORY_LABELS[m] for m in missing] + technical.missing),
+            "plus_reasons": _reason_text(all_contributions, positive=True),
+            "minus_reasons": _reason_text(all_contributions, positive=False),
+            "missing": " / ".join(missing_text),
         }
         for key in INDICATORS:
             row[key] = None if pd.isna(ind[key]) else round(float(ind[key]), 2)

@@ -96,7 +96,11 @@ def build_report(
             for category in details[r.code].values():
                 label = CATEGORY_LABELS[category.name]
                 score = "欠損" if category.score is None else f"{category.score:.1f}点"
-                lines += [f"**{label}: {score}**", "", "| 指標 | 値 | 点 | 判定 |", "|---|---:|---:|---|"]
+                if not category.contributions and not category.missing:
+                    lines += [f"**{label}: {score}**（点数に関わる項目なし）", ""]
+                    continue
+                header = "| 開示 | タイトル | 点 | 判定 |" if category.name == "disclosure" else "| 指標 | 値 | 点 | 判定 |"
+                lines += [f"**{label}: {score}**", "", header, "|---|---|---:|---|"]
                 for c in sorted(category.contributions, key=lambda c: c.points, reverse=True):
                     lines.append(f"| {c.label} | {c.value_text} | {c.points:+.0f} | {c.note} |")
                 for m in category.missing:

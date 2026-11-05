@@ -1,7 +1,9 @@
 """過去の日付のランキングを後から再現して、output/history_backfill.csv に保存する。
 
 使い方（プロジェクトのフォルダで）:
-    初回（株価の履歴を長く取り直してから再現する。数分かかる）:
+    適時開示は、手元にない日の分だけ取りに行く（初回は1年分で約7分。2回目からはほぼ0）。
+
+初回（株価の履歴を長く取り直してから再現する。数分かかる）:
         python scripts/backfill.py --fetch-days 900
     2回目以降（手元の株価だけで再現し直す。点数ルールを変えたときなど）:
         python scripts/backfill.py
@@ -22,6 +24,7 @@ import pandas as pd  # noqa: E402
 
 from kabu.backfill import backfill, default_start  # noqa: E402
 from kabu.config import load_settings, now_jst, resolve_path  # noqa: E402
+from kabu.data.disclosures import prepare_disclosure_events  # noqa: E402
 from kabu.data.prices import load_cached_prices, update_prices  # noqa: E402
 from kabu.data.universe import build_universe, universe_label  # noqa: E402
 from kabu.quality import QualityLog  # noqa: E402
@@ -76,7 +79,17 @@ def main() -> int:
 
     print(f"{dates[0]:%Y-%m-%d} 〜 {dates[-1]:%Y-%m-%d} の {len(dates)} 営業日分を再現します")
     stock_prices = {c: df for c, df in prices.items() if c != benchmark}
-    history, log = backfill(universe, stock_prices, dates, weights, now, universe_label(settings))
+    events, failed = None, None
+    if weights["category_weights"].get("disclosure", 0) > 0:
+        decay = weights["disclosure"]["decay_days"]
+        start_day = (dates[0] - pd.Timedelta(days=decay)).date()
+        events, failed, _ = prepare_disclosure_events(start_day, dates[-1].date(), settings, weights["disclosure"],
+                                                      quality, now.date())
+        if failed:
+            quality.warn("backfill", "", f"適時開示を取れなかった日が {len(failed)} 日あります。"
+                                         "その前後の日のランキングは、適時開示を欠損として扱っています")
+    history, log = backfill(universe, stock_prices, dates, weights, now, universe_label(settings),
+                            disclosure_events=events, disclosure_failed=failed)
 
     path = resolve_path(settings["paths"]["history_backfill"])
     history.to_csv(path, index=False, encoding="utf-8-sig")
