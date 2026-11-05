@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from kabu.config import load_settings, now_jst, resolve_path  # noqa: E402
 from kabu.data.disclosures import prepare_disclosure_events  # noqa: E402
 from kabu.data.prices import update_prices  # noqa: E402
+from kabu.data.xbrl_store import collect_xbrl, revision_details  # noqa: E402
 from kabu.data.universe import build_universe, universe_label  # noqa: E402
 from kabu.quality import QualityLog  # noqa: E402
 from kabu.report import append_history, build_report, save_ranking_csv, save_report  # noqa: E402
@@ -65,7 +66,14 @@ def main() -> int:
         if weights["category_weights"].get("disclosure", 0) > 0:
             decay = weights["disclosure"]["decay_days"]
             start = (data_date - timedelta(days=decay + 2)).date()
+            # XBRL は TDnet から約1か月で消えるので、毎回まだ取っていない分を取って保存しておく
+            saved = collect_xbrl(settings, set(universe["code"]), quality, now.date())
+            if saved:
+                print(f"XBRL（決算データ）を {saved} 件保存しました")
             events, failed, _ = prepare_disclosure_events(start, now.date(), settings, weights["disclosure"], quality, now.date())
+            details = revision_details(settings)
+            for df in events.values():
+                df["detail"] = df["id"].map(details)
             print(f"適時開示: {now:%Y-%m-%d %H:%M} 時点までに出た分を使います"
                   "（これより後に出た今日の開示は、次回のランキングに入ります）")
         ranking, details, excluded = rank_stocks(universe, stock_prices, data_date, weights, quality,

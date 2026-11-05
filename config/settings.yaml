@@ -66,10 +66,16 @@ prices:
 disclosures:
   pause_seconds: 1.0       # 問い合わせの間の待ち時間（相手は個人運営なので、短くしないこと）
 
+# --- XBRL（決算短信・業績予想の修正などの数字）---
+xbrl:
+  retention_days: 31       # TDnet に資料が置かれている日数の目安。この日数分さかのぼって、未取得のものを取る
+  pause_seconds: 1.0       # 問い合わせの間の待ち時間
+
 # --- 保存先（このフォルダからの相対パス）---
 paths:
   raw_prices: data/raw/prices
   raw_tdnet: data/raw/tdnet
+  xbrl: data/xbrl                 # XBRL から取り出した決算の主要な数字（TDnet から消えるので大事に保存）
   jpx_list: data/raw/jpx_list.xlsx
   daily_output: output/daily
   history: output/history.csv

@@ -78,6 +78,9 @@ def score_disclosures(
             points = e.points * weight
             total += points
             title = e.title if len(e.title) <= 40 else e.title[:39] + "…"
+            detail = getattr(e, "detail", None)
+            if isinstance(detail, str) and detail:
+                title = detail   # XBRL から中身（修正前後の予想）が分かっていれば、タイトルの代わりに表示する
             result.contributions.append(Contribution(
                 e.category, f"{e.pubdate:%m/%d} {e.label}", float(age), title, points,
                 f"開示から{age}日（重み{weight:.0%}）",
