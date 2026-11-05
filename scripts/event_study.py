@@ -21,6 +21,7 @@ from kabu.config import load_settings, now_jst, resolve_path  # noqa: E402
 from kabu.data.disclosures import prepare_disclosure_events  # noqa: E402
 from kabu.data.prices import load_cached_prices  # noqa: E402
 from kabu.data.universe import build_universe, universe_label  # noqa: E402
+from kabu.evaluation import codes_without_dividends  # noqa: E402
 from kabu.event_study import build_event_report, event_returns, summarize_events  # noqa: E402
 from kabu.quality import QualityLog  # noqa: E402
 from kabu.scoring import load_weights  # noqa: E402
@@ -59,6 +60,10 @@ def main() -> int:
         return 1
     print(f"{start.date()} 〜 {end.date()} の開示のうち、対象銘柄で分類できたもの: {len(events)} 件。値動きを計算しています…")
 
+    no_dividends = codes_without_dividends(prices)
+    if no_dividends:
+        quality.warn("evaluate", "", f"調整後終値がない {len(no_dividends)} 銘柄は、配当を含めずに株価だけで計算しています"
+                                     f"（{', '.join(no_dividends[:10])}{' など' if len(no_dividends) > 10 else ''}）")
     results = event_returns(events.reset_index(drop=True), prices, prices[benchmark], horizons)
     summary = summarize_events(results, horizons)
 

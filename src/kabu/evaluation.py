@@ -7,7 +7,9 @@
     → 市場全体が上がっただけなのか、選んだ銘柄が良かったのかを区別するため
   - 営業日は TOPIX ETF の取引日で数える
 
-配当は計算に入れていない（株価のみ）。配当落ち日をまたぐと、実際より少し悪く出る。
+配当は計算に入れる（配当を受け取って持ち続けた場合の成績）。株価だけで計算すると、
+3月末・9月末に集中する権利落ち（配当の分だけ株価が下がる日）をまたいだ回が、実際より悪く見えるため。
+配当込みの値は、yfinance の調整後終値（adj_close）と終値の比から作る（total_return_prices）。
 ネットにはつながない。株価は手元に保存済みのものを使う。
 """
 
@@ -21,10 +23,31 @@ PENDING = "未確定"
 MISSING = "株価欠損"
 
 
+def total_return_prices(df: pd.DataFrame) -> tuple[pd.Series, pd.Series, bool]:
+    """配当込みの始値・終値を作る。戻り値は (始値, 終値, 配当込みにできたか)。
+
+    調整後終値 ÷ 終値 を「その日の調整の倍率」とし、始値・終値の両方に掛ける。
+    調整後終値がない日（予備の Stooq で取った日など）は、前後の日の倍率で埋める。
+    調整後終値がまったくない銘柄は、株価だけで計算する（False を返すので、呼び出し側で警告する）。
+    """
+    if "adj_close" not in df.columns:
+        return df["open"], df["close"], False
+    factor = (df["adj_close"] / df["close"]).where(df["close"] > 0)
+    if factor.notna().sum() == 0:
+        return df["open"], df["close"], False
+    factor = factor.ffill().bfill()
+    return df["open"] * factor, df["close"] * factor, True
+
+
+def codes_without_dividends(prices: dict[str, pd.DataFrame]) -> list[str]:
+    """配当込みの値を作れない（調整後終値がない）銘柄。"""
+    return sorted(code for code, df in prices.items() if not total_return_prices(df)[2])
+
+
 def forward_returns(
     history: pd.DataFrame, prices: dict[str, pd.DataFrame], benchmark: pd.DataFrame, horizons: list[int]
 ) -> pd.DataFrame:
-    """history（ランキングの履歴）の各行に、N営業日後の騰落率（%）を付けて返す。
+    """history（ランキングの履歴）の各行に、N営業日後の騰落率（%、配当込み）を付けて返す。
 
     付ける列（N ごと）:
       ret_N:    銘柄の騰落率
@@ -33,9 +56,11 @@ def forward_returns(
       status_N: 確定 / 未確定（まだ N 営業日たっていない） / 株価欠損（売買停止など）
     """
     calendar = benchmark.index
-    bench_open = benchmark["open"].to_numpy()
-    bench_close = benchmark["close"].to_numpy()
+    b_open, b_close, _ = total_return_prices(benchmark)
+    bench_open = b_open.to_numpy()
+    bench_close = b_close.to_numpy()
     last_pos = len(calendar) - 1
+    adjusted = {code: total_return_prices(df) for code, df in prices.items()}
 
     out = history[["data_date", "code", "name", "rank", "total_score", "weights_version"]].copy()
     out["data_date"] = pd.to_datetime(out["data_date"])
@@ -55,9 +80,9 @@ def forward_returns(
             if stock is None:
                 status[idx] = MISSING
                 continue
-            # 銘柄の株価を TOPIX ETF の取引日にそろえる（売買停止の日は NaN になる）
-            s_open = stock["open"].reindex(calendar).to_numpy()
-            s_close = stock["close"].reindex(calendar).to_numpy()
+            # 銘柄の株価（配当込み）を TOPIX ETF の取引日にそろえる（売買停止の日は NaN になる）
+            s_open = adjusted[code][0].reindex(calendar).to_numpy()
+            s_close = adjusted[code][1].reindex(calendar).to_numpy()
             for i in idx:
                 e, x = entry_pos[i], exit_pos[i]
                 if base_pos[i] < 0:
@@ -212,7 +237,7 @@ def build_evaluation_report(
         lines.append(f"- 集計から外した古い version: {', '.join(map(str, excluded_versions))}（ルールが違うため混ぜない）")
     lines += [
         "- 買値: ランキング翌営業日の始値 / 売値: N営業日後の終値 / 比較対象: TOPIX ETF（1306）",
-        "- 超過リターン = 銘柄の騰落率 − 同じ期間の TOPIX ETF の騰落率（配当は含まない）",
+        "- 超過リターン = 銘柄の騰落率 − 同じ期間の TOPIX ETF の騰落率（どちらも配当込み）",
         "",
     ]
     for note in notes:

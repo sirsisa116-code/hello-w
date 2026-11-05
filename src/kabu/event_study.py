@@ -7,13 +7,14 @@
                   ここが、開示を見てから買った場合に実際に取れる部分
 
 「買える最初の始値」は、開示が 9:00 より前なら当日の始値（取引日なら）、9:00 以降なら翌営業日の始値。
+騰落率はどれも配当込み（evaluation.total_return_prices）。
 ネットにはつながない（株価も開示も手元に保存済みのものを使う）。
 """
 
 import numpy as np
 import pandas as pd
 
-from kabu.evaluation import CONFIRMED, forward_returns, t_value
+from kabu.evaluation import CONFIRMED, forward_returns, t_value, total_return_prices
 
 
 def base_date(pubdate: pd.Timestamp) -> pd.Timestamp:
@@ -44,18 +45,20 @@ def event_returns(
     base_pos = calendar.searchsorted(out["data_date"].to_numpy(), side="right") - 1
     entry_pos = base_pos + 1
     gap = np.full(len(out), np.nan)
+    b_open, b_close, _ = total_return_prices(benchmark)
     for code, idx in out.groupby("code").indices.items():
         stock = prices.get(code)
         if stock is None:
             continue
-        s_open = stock["open"].reindex(calendar).to_numpy()
-        s_close = stock["close"].reindex(calendar).to_numpy()
+        adj_open, adj_close, _ = total_return_prices(stock)
+        s_open = adj_open.reindex(calendar).to_numpy()
+        s_close = adj_close.reindex(calendar).to_numpy()
         for i in idx:
             b, e = base_pos[i], entry_pos[i]
             if b < 0 or e >= len(calendar):
                 continue
             stock_gap = s_open[e] / s_close[b] - 1
-            bench_gap = benchmark["open"].iloc[e] / benchmark["close"].iloc[b] - 1
+            bench_gap = b_open.iloc[e] / b_close.iloc[b] - 1
             gap[i] = (stock_gap - bench_gap) * 100
     out["gap_excess"] = gap.round(3)
     return out
@@ -95,7 +98,7 @@ def build_event_report(summary: pd.DataFrame, horizons: list[int], period: tuple
         f"- 対象の開示: {period[0]} 〜 {period[1]}（対象銘柄の範囲: {universe_label}）",
         "- 反応（買う前）: 開示前の最後の終値 → 買える最初の始値。翌朝に買う前提では取れない部分",
         "- N日後: 買える最初の始値 → N営業日後の終値。開示を見てから買った場合に取れる部分",
-        "- どちらも TOPIX ETF（1306）の同じ期間の騰落率を引いた超過リターン。配当・手数料は含まない",
+        "- どちらも TOPIX ETF（1306）の同じ期間の騰落率を引いた超過リターン。配当込み、手数料は含まない",
         "",
     ]
     lines += [f"> {n}" for n in notes]

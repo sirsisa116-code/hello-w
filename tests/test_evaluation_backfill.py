@@ -104,7 +104,7 @@ def test_benchmark_glitch_shows_as_outliers():
     from kabu.evaluation import find_outliers
     dates = pd.bdate_range("2026-09-01", periods=40, name="date")
     bench = frame(np.full(40, 100.0), np.full(40, 100.0), dates)
-    bench.iloc[20, [0, 3]] = 1000.0   # 21日目だけ始値・終値とも10倍
+    bench.iloc[20, [0, 3, 4]] = 1000.0   # 21日目だけ始値・終値・調整後終値とも10倍
     stock = frame(np.full(40, 100.0), np.full(40, 100.0), dates)
     rows = [[d.strftime("%Y-%m-%d"), "1111", "A", 1, 70, 1] for d in dates[:30]]
     out = forward_returns(history_rows(rows), {"1111": stock}, bench, [1, 5])
@@ -139,3 +139,19 @@ def test_t_value():
     values = pd.Series(np.tile([1.0, 2.0, 3.0], 10))
     t5, k5 = t_value(values, overlap=5)
     assert k5 == 6 and t5 == pytest.approx(values.mean() / (values.std() / np.sqrt(6)))
+
+
+def test_returns_include_dividends():
+    """権利落ちの日に配当の分だけ株価が下がっても、配当込みなら損をしていない扱いになる。"""
+    from kabu.evaluation import total_return_prices
+    dates = pd.bdate_range("2026-03-23", periods=10, name="date")
+    close = np.r_[np.full(5, 1000.0), np.full(5, 980.0)]          # 6日目に20円の配当落ち
+    adj = np.r_[np.full(5, 980.0), np.full(5, 980.0)]             # 調整後終値は過去分を配当の分だけ下げてある
+    stock = pd.DataFrame({"open": close, "high": close, "low": close, "close": close, "adj_close": adj,
+                          "volume": 1e6, "source": "t"}, index=dates)
+    _, adj_close, ok = total_return_prices(stock)
+    assert ok and adj_close.iloc[0] == pytest.approx(980.0)
+    bench = frame(np.full(10, 100.0), np.full(10, 100.0), dates)
+    out = forward_returns(history_rows([[dates[1].strftime("%Y-%m-%d"), "1111", "A", 1, 70, 1]]),
+                          {"1111": stock}, bench, [5])
+    assert out.loc[0, "ret_5"] == pytest.approx(0.0)   # 株価だけなら −2% に見えるところ

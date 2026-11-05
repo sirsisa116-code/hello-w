@@ -21,7 +21,8 @@ import pandas as pd  # noqa: E402
 from kabu.config import load_settings, now_jst, resolve_path  # noqa: E402
 from kabu.data.prices import load_cached_prices  # noqa: E402
 from kabu.evaluation import (  # noqa: E402
-    MISSING, OUTLIER_PCT, build_evaluation_report, find_outliers, fmt_value, forward_returns, summarize,
+    MISSING, OUTLIER_PCT, build_evaluation_report, codes_without_dividends, find_outliers, fmt_value,
+    forward_returns, summarize,
 )
 from kabu.quality import QualityLog  # noqa: E402
 
@@ -82,6 +83,10 @@ def main() -> int:
         if code not in prices:
             quality.error("evaluate", code, "手元に株価がないため、この銘柄の成績は計算できません")
 
+    no_dividends = codes_without_dividends(prices)
+    if no_dividends:
+        quality.warn("evaluate", "", f"調整後終値がない {len(no_dividends)} 銘柄は、配当を含めずに株価だけで計算しています"
+                                     f"（{', '.join(no_dividends[:10])}{' など' if len(no_dividends) > 10 else ''}）")
     results = forward_returns(history, prices, prices[benchmark], horizons)
     summary = summarize(results, horizons, top_n)
     outliers = find_outliers(results, horizons, prices, prices[benchmark], settings["prices"]["max_daily_move"])
