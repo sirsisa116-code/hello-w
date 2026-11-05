@@ -1,38 +1,34 @@
 """適時開示に付いている XBRL（決算データ）の zip の中身を調べる確認用スクリプト。
 
 使い方（プロジェクトのフォルダで）:
+    python scripts/probe_xbrl.py --local
+        前に取ってきて保存した zip（data/raw/tdnet_xbrl/）を読み直す。ネットにはつながない
+    python scripts/probe_xbrl.py --codes 7203,4502,8306
+        指定した銘柄について、手元の開示一覧にある最新の決算短信と業績予想の修正の XBRL を取ってきて読む
+        （1件ごとに2秒あける。前に取ったものは取り直さない）
     python scripts/probe_xbrl.py
+        手元の開示一覧のうち、XBRL 付きの割合だけを数える
 
-1. 手元に保存済みの開示一覧（data/raw/tdnet）から、決算短信・業績予想の修正・配当予想の修正のうち
-   XBRL 付きのものがどれくらいあるかを数える
-2. 決算短信と業績予想の修正を2件ずつ選び、XBRL の zip を取ってくる（全部で4回、各2秒の間隔）
-3. zip の中のファイル一覧と、数値データ（売上・利益・予想など）がどんな名前・形で入っているかを表示する
-
-取ってきた zip は data/raw/tdnet_xbrl/ に保存する（展開はせず、読むだけ）。
+読み取りには、本番用の部品（src/kabu/data/xbrl.py）を使う。zip は展開せずに読む。
 """
 
-import io
+import argparse
 import json
-import re
 import sys
 import time
-import zipfile
-from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import pandas as pd  # noqa: E402
 import requests  # noqa: E402
 
 from kabu.config import load_settings, resolve_path  # noqa: E402
 from kabu.data.disclosures import HEADERS, parse_items  # noqa: E402
+from kabu.data.xbrl import read_xbrl_zip  # noqa: E402
 
 PAUSE_SECONDS = 2.0
-MAX_ENTRY_BYTES = 30_000_000   # これより大きいファイルは読まない（念のため）
-FACT_PATTERN = re.compile(r"<ix:(nonFraction|nonNumeric)\b([^>]*)>(.*?)</ix:\1>", re.S)
-ATTR_PATTERN = re.compile(r'([\w:]+)="([^"]*)"')
-TAG_PATTERN = re.compile(r"<[^>]+>")
-
+MAX_LINES = 70
 KINDS = {
     "決算短信": lambda t: "決算短信" in t,
     "業績予想の修正": lambda t: "業績予想" in t and "修正" in t,
@@ -45,84 +41,107 @@ def direct_url(url: str) -> str:
     return url.split("rd.php?", 1)[1] if "rd.php?" in url else url
 
 
-def load_cached_disclosures(folder: Path):
-    import pandas as pd
+def load_cached_disclosures(folder: Path) -> pd.DataFrame:
     frames = [parse_items(json.loads(p.read_text(encoding="utf-8"))) for p in sorted(folder.glob("*.json"))]
-    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    return df.drop_duplicates("id").sort_values("pubdate")
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    return df.drop_duplicates("id").sort_values("pubdate").reset_index(drop=True)
 
 
-def show_zip(content: bytes) -> None:
-    with zipfile.ZipFile(io.BytesIO(content)) as z:
-        infos = z.infolist()
-        print(f"  zip の中身（{len(infos)} ファイル）:")
-        for info in infos:
-            print(f"    {info.file_size:>9,} バイト  {info.filename}")
-        targets = [i for i in infos if i.filename.lower().endswith((".htm", ".html", ".xhtml"))
-                   and i.file_size <= MAX_ENTRY_BYTES]
-        for info in targets:
-            text = z.read(info).decode("utf-8", errors="replace")
-            facts = FACT_PATTERN.findall(text)
-            if not facts:
-                continue
-            numeric = [(dict(ATTR_PATTERN.findall(attrs)), TAG_PATTERN.sub("", body).strip())
-                       for kind, attrs, body in facts if kind == "nonFraction"]
-            print(f"\n  --- {info.filename}: 数値 {len(numeric)} 件 / 文字 {len(facts) - len(numeric)} 件 ---")
-            contexts = Counter(a.get("contextRef", "") for a, _ in numeric)
-            print(f"  contextRef の種類（多い順、最大25）:")
-            for ctx, n in contexts.most_common(25):
-                print(f"    {n:>3} 件  {ctx}")
-            print(f"  数値の例（最大60件。名前 / contextRef / scale / sign / 表示されている値）:")
-            for attrs, value in numeric[:60]:
-                print(f"    {attrs.get('name', '')} | {attrs.get('contextRef', '')} | scale={attrs.get('scale', '')}"
-                      f" | sign={attrs.get('sign', '')} | {value}")
-        xmls = [i for i in infos if i.filename.lower().endswith(".xml") and i.file_size <= MAX_ENTRY_BYTES]
-        if not any(FACT_PATTERN.search(z.read(i).decode("utf-8", errors="replace")) for i in targets) and xmls:
-            biggest = max(xmls, key=lambda i: i.file_size)
-            print(f"\n  inline XBRL が見つからなかったので、{biggest.filename} の先頭を表示します:")
-            print(z.read(biggest).decode("utf-8", errors="replace")[:1500])
+def show_facts(content: bytes) -> None:
+    facts = read_xbrl_zip(content)
+    if facts.empty:
+        print("  inline XBRL（-ixbrl.htm）が見つかりませんでした")
+        return
+    for (file, doc_type), g in facts.groupby(["file", "doc_type"], sort=False):
+        numbers = g[g["kind"] == "number"]
+        filled = numbers[numbers["value"].notna()]
+        print(f"\n  --- [{doc_type}] {file.rsplit('/', 1)[-1]}: 数値 {len(numbers)} 件（値あり {len(filled)} 件）"
+              f" / 文字 {int((g['kind'] == 'text').sum())} 件 ---")
+        if filled.empty:
+            texts = g[g["kind"] == "text"]["name"].unique()[:20]
+            print(f"  文字の項目名（最大20）: {', '.join(texts)}")
+            continue
+        print("  値のある数値（名前 | contextRef | 値 | 表示されている文字）:")
+        for r in filled.head(MAX_LINES).itertuples(index=False):
+            value = f"{r.value:,.0f}" if abs(r.value) >= 1000 else f"{r.value:.4g}"
+            print(f"    {r.prefix}:{r.name} | {r.context} | {value} | {r.text[:20]}")
+        if len(filled) > MAX_LINES:
+            print(f"    ……ほか {len(filled) - MAX_LINES} 件")
+
+
+def fetch_zip(row, save_dir: Path) -> bytes | None:
+    path = save_dir / f"{row.id}.zip"
+    if path.exists():
+        return path.read_bytes()
+    url = direct_url(row.url_xbrl)
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=60)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"  取得失敗: {e}")
+        return None
+    path.write_bytes(response.content)
+    return response.content
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="XBRL の中身を調べる")
+    parser.add_argument("--local", action="store_true", help="保存済みの zip を読み直す（ネットにつながない）")
+    parser.add_argument("--codes", help="調べる銘柄コード（カンマ区切り）")
+    args = parser.parse_args()
+
     settings = load_settings()
-    folder = resolve_path(settings["paths"]["raw_tdnet"])
-    df = load_cached_disclosures(folder)
-    if df.empty:
-        print(f"{folder} に開示一覧がありません。先に backfill.py か run_daily.py を実行してください")
-        return 1
-
-    print(f"手元の開示一覧: {df['pubdate'].min():%Y-%m-%d} 〜 {df['pubdate'].max():%Y-%m-%d}、{len(df)} 件")
-    print("種類ごとの XBRL 付きの割合:")
-    for kind, match in KINDS.items():
-        sub = df[df["title"].map(match)]
-        print(f"  {kind}: {len(sub)} 件中 {int(sub['has_xbrl'].sum())} 件")
-
-    samples = []
-    for kind in ("決算短信", "業績予想の修正"):
-        sub = df[df["title"].map(KINDS[kind]) & df["has_xbrl"] & ~df["title"].str.contains("訂正")]
-        samples += [(kind, row) for row in sub.tail(2).itertuples(index=False)]
-
     save_dir = resolve_path("data/raw/tdnet_xbrl")
     save_dir.mkdir(parents=True, exist_ok=True)
-    for i, (kind, row) in enumerate(samples):
-        if i > 0:
-            time.sleep(PAUSE_SECONDS)
-        url = direct_url(row.url_xbrl)
-        print("\n" + "=" * 70)
-        print(f"[{kind}] {row.pubdate:%Y-%m-%d %H:%M} {row.code} {row.company_name}")
-        print(f"  タイトル: {row.title}")
-        print(f"  URL: {url}")
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=60)
-            response.raise_for_status()
-        except requests.RequestException as e:
-            print(f"  取得失敗: {e}")
-            continue
-        (save_dir / f"{row.id}.zip").write_bytes(response.content)
-        try:
-            show_zip(response.content)
-        except zipfile.BadZipFile:
-            print(f"  zip として読めません（先頭: {response.content[:120]!r}）")
+    df = load_cached_disclosures(resolve_path(settings["paths"]["raw_tdnet"]))
+
+    if args.local:
+        zips = sorted(save_dir.glob("*.zip"))
+        if not zips:
+            print(f"{save_dir} に zip がありません")
+            return 1
+        titles = df.set_index("id")[["code", "company_name", "title"]] if not df.empty else None
+        for path in zips:
+            print("\n" + "=" * 70)
+            if titles is not None and path.stem in titles.index:
+                info = titles.loc[path.stem]
+                print(f"{path.name}: {info['code']} {info['company_name']} / {info['title']}")
+            else:
+                print(path.name)
+            show_facts(path.read_bytes())
+        return 0
+
+    if df.empty:
+        print("手元に開示一覧がありません。先に backfill.py か run_daily.py を実行してください")
+        return 1
+
+    if not args.codes:
+        print(f"手元の開示一覧: {df['pubdate'].min():%Y-%m-%d} 〜 {df['pubdate'].max():%Y-%m-%d}、{len(df)} 件")
+        for kind, match in KINDS.items():
+            sub = df[df["title"].map(match)]
+            print(f"  {kind}: {len(sub)} 件中 XBRL 付き {int(sub['has_xbrl'].sum())} 件")
+        return 0
+
+    usable = df[df["has_xbrl"] & ~df["title"].str.contains("訂正")]
+    first = True
+    for code in [c.strip().upper() for c in args.codes.split(",") if c.strip()]:
+        for kind in ("決算短信", "業績予想の修正"):
+            sub = usable[(usable["code"] == code) & usable["title"].map(KINDS[kind])]
+            print("\n" + "=" * 70)
+            if sub.empty:
+                print(f"[{code} {kind}] 手元の開示一覧に、XBRL 付きのものがありません")
+                continue
+            row = sub.iloc[-1]
+            print(f"[{code} {kind}] {row.pubdate:%Y-%m-%d %H:%M} {row.company_name} / {row.title}")
+            if not (save_dir / f"{row.id}.zip").exists():
+                if not first:
+                    time.sleep(PAUSE_SECONDS)
+                first = False
+            content = fetch_zip(row, save_dir)
+            if content is not None:
+                show_facts(content)
     return 0
 
 
