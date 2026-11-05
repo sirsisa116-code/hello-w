@@ -356,6 +356,18 @@ def _repair_and_log(code: str, df: pd.DataFrame, quality: QualityLog | None) -> 
     return fixed, bool(notes)
 
 
+def expected_latest_weekday(now: datetime, close_time: str) -> pd.Timestamp:
+    """今の時刻なら、どの日の株価までそろっているはずか（祝日は考えない。平日だけを見る）。
+    引け後（close_time 以降）の平日なら今日、それ以外は直前の平日。"""
+    hour, minute = map(int, close_time.split(":"))
+    day = pd.Timestamp(now.date())
+    if not (day.weekday() < 5 and (now.hour, now.minute) >= (hour, minute)):
+        day -= pd.Timedelta(days=1)
+        while day.weekday() >= 5:
+            day -= pd.Timedelta(days=1)
+    return day
+
+
 def check_prices(prices: dict[str, pd.DataFrame], conf: dict, now: datetime, quality: QualityLog) -> pd.Timestamp | None:
     """古さ・長さ・出来高・異常な値動きを点検する。全銘柄の中で一番新しい日付（基準日）を返す。"""
     if not prices:
@@ -367,6 +379,12 @@ def check_prices(prices: dict[str, pd.DataFrame], conf: dict, now: datetime, qua
     if reference < stale_limit:
         quality.warn(SOURCE, "", f"全銘柄の最新データが {reference.date()} 止まりです。"
                                  f"データ源の遅延か、長い休場の可能性があります")
+    else:
+        expected = expected_latest_weekday(now, conf["market_close_jst"])
+        if reference < expected:
+            quality.warn(SOURCE, "", f"直近の平日 {expected.date()} の株価が、どの銘柄にもありません"
+                                     f"（最新は {reference.date()}）。祝日・休場日でなければデータ源の遅れなので、"
+                                     "後でもう一度実行してください（次回、直近の分を取り直します）")
 
     for code, df in prices.items():
         if latest[code] < reference:

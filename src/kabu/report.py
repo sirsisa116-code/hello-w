@@ -37,6 +37,19 @@ def append_history(
     new.to_csv(path, index=False, encoding="utf-8-sig")
 
 
+def tie_notes(ranking: pd.DataFrame, top_n: int) -> list[str]:
+    """上位に同点の銘柄があれば、その旨の注意書きを返す。"""
+    counts = ranking["total_score"].value_counts()
+    notes = []
+    for score in ranking.head(top_n)["total_score"].unique():
+        n = int(counts[score])
+        if n > 1:
+            shown = int((ranking.head(top_n)["total_score"] == score).sum())
+            notes.append(f"- 総合 {score:.1f} 点は {n} 銘柄が同点です（上の表に出ているのはそのうち {shown} 銘柄）。"
+                         "同点の中の順番は銘柄コード順で、意味はありません。")
+    return [""] + notes if notes else []
+
+
 def _fmt_date(ts: pd.Timestamp) -> str:
     return f"{ts:%Y-%m-%d}（{WEEKDAYS[ts.weekday()]}）"
 
@@ -88,6 +101,7 @@ def build_report(
                 f"| {r.rank} | {r.code} | {r.name} | {r.total_score:.1f} | {r.close:,.0f} | "
                 f"{r.day_change_pct:+.2f}% | {r.plus_reasons or '—'} |"
             )
+        lines += tie_notes(ranking, top_n)
 
         lines += ["", "## 銘柄ごとの根拠", ""]
         for r in ranking.head(top_n).itertuples(index=False):

@@ -96,7 +96,7 @@ def collect_xbrl(
         progress(f"XBRL（決算データ）を {len(targets)} 件取得します（{conf['pause_seconds']}秒間隔）…")
 
     figures_path, log_path = _paths(settings)
-    saved, errors, not_found = 0, 0, 0
+    saved, errors, not_found, empty_codes = 0, 0, 0, []
     for i, row in enumerate(targets.itertuples(index=False), 1):
         if i > 1:
             time.sleep(conf["pause_seconds"])
@@ -114,6 +114,7 @@ def collect_xbrl(
                 saved += 1
                 if figures.empty:
                     message = "主要な数字が見つかりませんでした（項目名が想定外の可能性）"
+                    empty_codes.append(row.code)
         errors += status == "error"
         not_found += status == "not_found"
         _append(log_path, pd.DataFrame([{
@@ -127,6 +128,11 @@ def collect_xbrl(
                                  "詳細は data/xbrl/fetch_log.csv）")
     if not_found:
         quality.warn(SOURCE, "", f"XBRL が TDnet に見つからなかった開示が {not_found} 件あります（保存期間切れの可能性）")
+    if empty_codes:
+        codes_text = ", ".join(sorted(set(empty_codes))[:15])
+        quality.warn(SOURCE, "", f"XBRL から主要な数字を1つも取り出せなかった開示が {len(empty_codes)} 件あります"
+                                 f"（銘柄: {codes_text}）。項目名が想定外の可能性があるので、"
+                                 "scripts/check_xbrl.py で確認してください")
     return saved
 
 

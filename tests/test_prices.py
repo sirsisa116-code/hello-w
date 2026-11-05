@@ -17,7 +17,8 @@ from kabu.data.prices import (
 )
 from kabu.quality import QualityLog
 
-CONF = {"max_stale_days": 5, "min_history_rows": 3, "max_daily_move": 0.3, "suspicious_check_rows": 30}
+CONF = {"max_stale_days": 5, "min_history_rows": 3, "max_daily_move": 0.3, "suspicious_check_rows": 30,
+        "market_close_jst": "16:00"}
 
 
 def make_prices(dates, closes, volume=1000):
@@ -182,3 +183,20 @@ def test_drop_invalid_rows():
     fixed, notes = clean_prices(df)
     assert list(fixed["close"]) == [1800.0, 1810.0]
     assert "ありえない値" in notes[0]
+
+
+def test_expected_latest_weekday():
+    from kabu.data.prices import expected_latest_weekday
+    # 実際に起きた例: 11/6（金）0:15 の実行なら、11/5（木）の株価まであるはず
+    assert expected_latest_weekday(datetime(2026, 11, 6, 0, 15, tzinfo=JST), "16:00") == pd.Timestamp("2026-11-05")
+    assert expected_latest_weekday(datetime(2026, 11, 6, 17, 0, tzinfo=JST), "16:00") == pd.Timestamp("2026-11-06")
+    assert expected_latest_weekday(datetime(2026, 11, 9, 10, 0, tzinfo=JST), "16:00") == pd.Timestamp("2026-11-06")  # 月曜の朝 → 金曜
+    assert expected_latest_weekday(datetime(2026, 11, 8, 20, 0, tzinfo=JST), "16:00") == pd.Timestamp("2026-11-06")  # 日曜 → 金曜
+
+
+def test_check_prices_warns_when_latest_weekday_missing():
+    now = datetime(2026, 11, 6, 0, 15, tzinfo=JST)
+    prices = {"1111": make_prices(["2026-11-02", "2026-11-04"], [100, 101])}
+    quality = QualityLog()
+    check_prices(prices, CONF, now, quality)
+    assert any("2026-11-05 の株価が、どの銘柄にもありません" in i.message for i in quality.issues)

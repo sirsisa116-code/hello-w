@@ -165,3 +165,11 @@ def test_universe_label():
     assert universe_label({"universe": {"mode": "watchlist"}}) == "watchlist"
     conf = {"universe": {"mode": "prime", "prime_scales": ["TOPIX Core30", "TOPIX Large70", "TOPIX Mid400"]}}
     assert universe_label(conf) == "prime:Core30+Large70+Mid400"
+
+
+def test_tie_notes():
+    from kabu.report import tie_notes
+    ranking = pd.DataFrame({"total_score": [66.5, 66.5, 66.5, 60.0, 55.0]})
+    notes = tie_notes(ranking, top_n=2)
+    assert len(notes) == 2 and "66.5 点は 3 銘柄が同点" in notes[1] and "そのうち 2 銘柄" in notes[1]
+    assert tie_notes(pd.DataFrame({"total_score": [70.0, 60.0]}), top_n=2) == []
