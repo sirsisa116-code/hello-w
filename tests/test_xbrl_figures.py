@@ -147,3 +147,26 @@ def test_revision_change_uses_first_changed_profit():
     assert revision_change(figures_of(html, "rvfc")) == pytest.approx(-0.1)
     flat = html.replace(">36,000<", ">40,000<")
     assert revision_change(figures_of(flat, "rvfc")) == 0.0
+
+
+def test_non_consolidated_summary():
+    """実際にあった例: 非連結の会社（4733）は書類の種類が snedjpsy、純利益が NetIncome。"""
+    html = "<html><body>" + "".join([
+        fact("NetIncome", "CurrentAccumulatedQ2Duration_NonConsolidatedMember_ResultMember", "10,135"),
+        fact("OperatingIncome", "CurrentYearDuration_NonConsolidatedMember_ForecastMember", "27,600"),
+    ]) + "</body></html>"
+    figures = figures_of(html, "snedjpsy").set_index("item")
+    assert figures.loc["net_income", "value"] == 10_135e6
+    assert figures.loc["operating_income", "consolidated"] == "個別"
+
+
+def test_empty_results_are_retried():
+    log = pd.DataFrame([
+        {"id": "1", "status": "ok", "message": ""},
+        {"id": "2", "status": "ok", "message": store.EMPTY_MESSAGE},
+        {"id": "3", "status": "not_found", "message": "x"},
+        {"id": "4", "status": "error", "message": "x"},
+        {"id": "5", "status": "ok", "message": store.EMPTY_MESSAGE},
+        {"id": "5", "status": "ok", "message": ""},          # 読み直して数字が取れた
+    ])
+    assert store.finished_ids(log) == {"1", "3", "5"}

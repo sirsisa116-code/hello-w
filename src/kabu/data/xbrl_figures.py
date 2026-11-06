@@ -2,7 +2,7 @@
 
 項目名は会計基準で違う（実物で確認したもの）:
   日本基準: NetSales（会社によって OperatingRevenues）、OperatingIncome、OrdinaryIncome、
-            ProfitAttributableToOwnersOfParent、NetIncomePerShare
+            ProfitAttributableToOwnersOfParent（非連結の会社は NetIncome）、NetIncomePerShare
   IFRS:     SalesIFRS、OperatingIncomeIFRS、ProfitBeforeTaxIFRS、
             ProfitAttributableToOwnersOfParentIFRS、BasicEarningsPerShareIFRS
   米国基準・銀行は実物で未確認。見つからない項目は取り出さない（黙って別の項目で代用しない）。
@@ -25,7 +25,7 @@ ITEMS = {
     "ordinary_income": ["OrdinaryIncome"],
     "pretax_income": ["ProfitBeforeTaxIFRS", "IncomeBeforeIncomeTaxesUS"],
     "net_income": ["ProfitAttributableToOwnersOfParent", "ProfitAttributableToOwnersOfParentIFRS",
-                   "NetIncomeAttributableToOwnersOfParentUS"],
+                   "NetIncomeAttributableToOwnersOfParentUS", "NetIncome"],   # NetIncome は非連結の会社
     "eps": ["NetIncomePerShare", "BasicEarningsPerShareIFRS", "BasicNetIncomePerShareUS"],
     "dividend_per_share": ["DividendPerShare"],
 }
@@ -52,9 +52,9 @@ def parse_context(context: str) -> dict:
 
 
 def is_summary_or_revision(doc_type: str) -> bool:
-    """決算短信のサマリー（例 scedjpsy・acedifsm）か、業績予想の修正（rvfc）か。
+    """決算短信のサマリー（例 scedjpsy・acedifsm、非連結の会社は snedjpsy）か、業績予想の修正（rvfc）か。
     財務諸表の本体（〜fr）は項目が多すぎるので、今は使わない。"""
-    return doc_type == "rvfc" or (len(doc_type) == 8 and doc_type[1:4] == "ced" and doc_type[6] == "s")
+    return doc_type == "rvfc" or (len(doc_type) == 8 and doc_type[1:4] in ("ced", "ned") and doc_type[6] == "s")
 
 
 def extract_key_figures(facts: pd.DataFrame) -> pd.DataFrame:

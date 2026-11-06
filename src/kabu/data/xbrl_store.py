@@ -61,6 +61,21 @@ def _append(path, df: pd.DataFrame) -> None:
     df.to_csv(path, mode="a", header=not path.exists(), index=False, encoding="utf-8-sig")
 
 
+EMPTY_MESSAGE = "主要な数字が見つかりませんでした（項目名が想定外の可能性）"
+
+
+def finished_ids(log: pd.DataFrame) -> set[str]:
+    """もう取りに行かない開示。最後の取得結果が ok で数字が取れたもの、または not_found のもの。
+    ok でも数字を1つも取り出せなかったものは、読み取り方を直したあとに読み直せるよう、
+    TDnet に残っている間（retention_days 以内）は毎回取り直す。"""
+    if log.empty:
+        return set()
+    last = log.drop_duplicates("id", keep="last")
+    message = last["message"].fillna("").astype(str)
+    finished = (last["status"] == "not_found") | ((last["status"] == "ok") & (message != EMPTY_MESSAGE))
+    return set(last.loc[finished, "id"])
+
+
 def fetch_zip(url: str) -> tuple[bytes | None, str, str]:
     """戻り値: (zip の中身, 状態 ok/not_found/error, 説明)"""
     try:
@@ -87,8 +102,7 @@ def collect_xbrl(
         & disclosures["title"].map(lambda t: any(w in t for w in TARGET_WORDS))
         & ~disclosures["title"].str.contains("訂正")
     ]
-    log = load_fetch_log(settings)
-    done = set(log.loc[log["status"].isin(["ok", "not_found"]), "id"])
+    done = finished_ids(load_fetch_log(settings))
     targets = targets[~targets["id"].isin(done)]
     if targets.empty:
         return 0
@@ -113,7 +127,7 @@ def collect_xbrl(
                 _append(figures_path, figures)
                 saved += 1
                 if figures.empty:
-                    message = "主要な数字が見つかりませんでした（項目名が想定外の可能性）"
+                    message = EMPTY_MESSAGE
                     empty_codes.append(row.code)
         errors += status == "error"
         not_found += status == "not_found"

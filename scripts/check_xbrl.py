@@ -36,6 +36,9 @@ def main() -> int:
         print(f"  {status}: {n} 件")
 
     ok = latest[latest["status"] == "ok"].set_index("id")
+    retry = ok["message"].fillna("").astype(str).str.startswith("主要な数字が見つかりませんでした").sum()
+    if retry:
+        print(f"  （数字を1つも取り出せなかった {retry} 件は、TDnet に残っている間は次回の run_daily.py で読み直します）")
     by_id = {i: g for i, g in figures.groupby("id")}
     summaries = ok[ok["title"].str.contains("決算短信")]
     revisions = ok[ok["title"].str.contains("業績予想")]
