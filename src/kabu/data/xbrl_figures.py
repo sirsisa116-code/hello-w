@@ -102,15 +102,22 @@ def revision_summary(figures: pd.DataFrame) -> str:
 
 
 def revision_change(figures: pd.DataFrame) -> float | None:
-    """業績予想の修正で、利益予想が何%変わったか（営業利益 → 経常利益/税引前 → 純利益 の順で最初にそろうもの）。
-    前回予想が0以下（赤字予想など）のときは率に意味がないので None。"""
+    """業績予想の修正で、通期の利益予想が何%変わったか。
+
+    営業利益 → 経常利益 → 税引前利益 → 純利益 の順に見て、最初に変化があった利益の変化率を返す
+    （営業利益は据え置きで純利益だけ修正、といった場合も修正として扱うため）。
+    どの利益も変わっていなければ 0.0（据え置き）。前回予想が0以下の利益は率に意味がないので飛ばし、
+    比べられる利益が1つもなければ None。"""
     rv = figures[(figures["doc_type"] == "rvfc") & (figures["kind"] == "forecast")
                  & (figures["period"] == "CurrentYearDuration")]
     for consolidated in ("連結", "個別", ""):
         g = rv[rv["consolidated"] == consolidated]
+        changes = []
         for item in ("operating_income", "ordinary_income", "pretax_income", "net_income"):
             before = g[(g["item"] == item) & (g["stage"] == "previous")]["value"]
             after = g[(g["item"] == item) & (g["stage"] == "current")]["value"]
-            if not before.empty and not after.empty:
-                return None if before.iloc[0] <= 0 else after.iloc[0] / before.iloc[0] - 1
+            if not before.empty and not after.empty and before.iloc[0] > 0:
+                changes.append(after.iloc[0] / before.iloc[0] - 1)
+        if changes:
+            return next((c for c in changes if abs(c) > 1e-9), 0.0)
     return None

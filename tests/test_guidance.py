@@ -101,3 +101,14 @@ def test_fetch_and_load_statements(tmp_path, monkeypatch):
     assert df.loc[0, "disclosed_at"] == pd.Timestamp("2026-08-04 14:00")
     saved = json.loads((tmp_path / "jq" / "fins_summary" / "7203.json").read_text(encoding="utf-8"))
     assert "fetched_at" in saved
+
+
+def test_revision_uses_first_changed_profit():
+    df = frame([
+        row("2024-05-10", "1QFinancialStatements_Consolidated_JP", "1Q", "2025-03-31", FOP=100, FOdP=120, FNP=80),
+        row("2024-08-09", "EarnForecastRevision", "FY", "2025-03-31", FOP=100, FOdP=120, FNP=60),
+        row("2024-11-10", "2QFinancialStatements_Consolidated_JP", "2Q", "2025-03-31", FOP=100, FOdP=120, FNP=60),
+    ])
+    ev = guidance_events(df)
+    assert list(ev["metric"]) == ["純利益", "営業利益"]
+    assert ev["change"].iloc[0] == pytest.approx(-0.25) and ev["change"].iloc[1] == 0

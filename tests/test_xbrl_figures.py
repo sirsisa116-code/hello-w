@@ -132,3 +132,18 @@ def test_collect_xbrl_saves_and_skips_done(tmp_path, monkeypatch):
 def test_direct_url():
     assert store.direct_url("https://webapi.yanoshin.jp/rd.php?https://www.release.tdnet.info/inbs/1.zip") == \
         "https://www.release.tdnet.info/inbs/1.zip"
+
+
+def test_revision_change_uses_first_changed_profit():
+    """実際にあった例: 営業利益・経常利益の予想は据え置きで、純利益だけ修正。"""
+    html = "<html><body>" + "".join([
+        fact("OperatingIncome", "CurrentYearDuration_ConsolidatedMember_PreviousMember_ForecastMember", "53,500"),
+        fact("OperatingIncome", "CurrentYearDuration_ConsolidatedMember_CurrentMember_ForecastMember", "53,500"),
+        fact("OrdinaryIncome", "CurrentYearDuration_ConsolidatedMember_PreviousMember_ForecastMember", "67,500"),
+        fact("OrdinaryIncome", "CurrentYearDuration_ConsolidatedMember_CurrentMember_ForecastMember", "67,500"),
+        fact("ProfitAttributableToOwnersOfParent", "CurrentYearDuration_ConsolidatedMember_PreviousMember_ForecastMember", "40,000"),
+        fact("ProfitAttributableToOwnersOfParent", "CurrentYearDuration_ConsolidatedMember_CurrentMember_ForecastMember", "36,000"),
+    ]) + "</body></html>"
+    assert revision_change(figures_of(html, "rvfc")) == pytest.approx(-0.1)
+    flat = html.replace(">36,000<", ">40,000<")
+    assert revision_change(figures_of(flat, "rvfc")) == 0.0

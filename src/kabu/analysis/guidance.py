@@ -6,7 +6,8 @@
   fy_surprise  本決算の利益の実績が、直前の会社予想より何%上か下か
   new_guidance 本決算と一緒に出る来期予想が、今期の実績より何%伸びる見込みか
 
-利益は 営業利益（OP）→ 経常利益（OdP）→ 純利益（NP）の順で、比べる2つの数字がそろう最初のものを使う。
+利益は 営業利益（OP）→ 経常利益（OdP）→ 純利益（NP）の順に比べ、最初に変化があったものを使う
+（営業利益は据え置きで純利益だけ修正、といった場合も修正として扱う）。どれも変わらなければ据え置き。
 比べる元の数字が0以下（赤字など）のときは、変化率に意味がないので出来事にしない。
 その日に分かっていた情報だけで計算する（書類を開示の時刻順に1件ずつ読み進める）。
 """
@@ -38,12 +39,17 @@ def bucket(change: float, buckets: list) -> tuple[str, str]:
 
 
 def _compare(before: dict, after: dict) -> tuple[str, float, float] | None:
-    """2つの数字の組から、そろう最初の利益で (名前, 前, 後) を返す。前が0以下ならその利益は飛ばす。"""
+    """2つの数字の組を、営業利益 → 経常利益 → 純利益 の順に比べ、最初に変化があった利益で (名前, 前, 後) を返す。
+    どの利益も変わっていなければ、比べられた最初の利益を返す（据え置き）。前が0以下の利益は飛ばす。"""
+    first = None
     for name in ("営業利益", "経常利益", "純利益"):
         b, a = before.get(name), after.get(name)
-        if b is not None and a is not None and not (np.isnan(b) or np.isnan(a)) and b > 0:
+        if b is None or a is None or np.isnan(b) or np.isnan(a) or b <= 0:
+            continue
+        if abs(a / b - 1) > 1e-9:
             return name, b, a
-    return None
+        first = first or (name, b, a)
+    return first
 
 
 def _text(value) -> str | None:

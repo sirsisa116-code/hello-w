@@ -69,7 +69,7 @@ def main() -> int:
         print(f"  ……ほか {len(missing) - 20} 件")
 
     print("\n=== 4. 業績予想の修正の中身 ===")
-    up = down = unknown = 0
+    up = down = flat = unknown = 0
     lines = []
     for i in revisions.index:
         g = by_id.get(i)
@@ -83,10 +83,13 @@ def main() -> int:
             up += 1
         elif change < 0:
             down += 1
+        else:
+            flat += 1
         text = revision_summary(g) or "（修正前後の予想がそろわない）"
         lines.append(f"  {revisions.loc[i, 'code']} {str(revisions.loc[i, 'pubdate'])[:10]} {text}")
-    print(f"  上方 {up} 件 / 下方 {down} 件 / 方向を決められない {unknown} 件"
-          "（通期の利益予想で判断。赤字予想どうしや通期予想がない場合は「決められない」）")
+    print(f"  上方 {up} 件 / 下方 {down} 件 / 利益予想は据え置き {flat} 件 / 方向を決められない {unknown} 件")
+    print("  （通期の利益予想を 営業→経常→税引前→純利益 の順に見て、最初に変化があった利益で判断。"
+          "赤字予想どうしや通期予想がない場合は「決められない」）")
     for line in lines[:30]:
         print(line)
     if len(lines) > 30:
