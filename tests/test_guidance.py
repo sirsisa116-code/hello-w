@@ -112,3 +112,25 @@ def test_revision_uses_first_changed_profit():
     ev = guidance_events(df)
     assert list(ev["metric"]) == ["純利益", "営業利益"]
     assert ev["change"].iloc[0] == pytest.approx(-0.25) and ev["change"].iloc[1] == 0
+
+
+def test_next_year_lowercase_and_non_consolidated_names():
+    """実物の項目名: 来期の純利益予想は NxFNp（小文字）。非連結の会社は NxFNCOP など NC の付いた名前。"""
+    df = frame([
+        row("2025-05-10", "FYFinancialStatements_Consolidated_JP", "FY", "2025-03-31", NP=100),
+    ])
+    df["NxFNp"] = 130.0                       # 銀行のように営業利益・経常利益の予想がない
+    ev = guidance_events(df)
+    assert ev["kind"].tolist() == ["new_guidance"] and ev["metric"].iloc[0] == "純利益"
+    assert ev["change"].iloc[0] == pytest.approx(0.3)
+
+    nc = frame([
+        row("2025-05-10", "FYFinancialStatements_NonConsolidated_JP", "FY", "2025-03-31"),
+        row("2025-08-10", "1QFinancialStatements_NonConsolidated_JP", "1Q", "2026-03-31"),
+    ])
+    nc["NCOP"] = [200.0, np.nan]
+    nc["NxFNCOP"] = [220.0, np.nan]
+    nc["FNCOP"] = [np.nan, 242.0]
+    ev = guidance_events(nc)
+    assert ev["kind"].tolist() == ["new_guidance", "revision"]
+    assert ev["change"].tolist() == pytest.approx([0.1, 0.1])

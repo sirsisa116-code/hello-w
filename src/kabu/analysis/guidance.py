@@ -15,7 +15,28 @@
 import numpy as np
 import pandas as pd
 
+# (実績, 今期予想, 来期予想, 表示名)。連結の項目名。非連結の会社は NC を付けた名前（NCOP・FNCOP・NxFNCOP など）。
+# J-Quants は表記がそろっていない（今期の純利益予想は FNP、来期は NxFNp）ので、大文字小文字を区別せずに探す。
 METRICS = [("OP", "FOP", "NxFOP", "営業利益"), ("OdP", "FOdP", "NxFOdP", "経常利益"), ("NP", "FNP", "NxFNP", "純利益")]
+ROLES = {"actual": 0, "forecast": 1, "next": 2}
+
+
+def _non_consolidated(name: str) -> str:
+    """連結の項目名から、非連結の項目名を作る（OP → NCOP、FOP → FNCOP、NxFOP → NxFNCOP）。"""
+    for prefix in ("NxF", "F"):
+        if name.startswith(prefix):
+            return prefix + "NC" + name[len(prefix):]
+    return "NC" + name
+
+
+def normalize_columns(statements: pd.DataFrame) -> pd.DataFrame:
+    """項目名の大文字小文字のゆれをそろえる（例: NxFNp → NxFNP）。"""
+    canonical = {}
+    for metric in METRICS:
+        for name in metric[:3]:
+            canonical[name.lower()] = name
+            canonical[_non_consolidated(name).lower()] = _non_consolidated(name)
+    return statements.rename(columns={c: canonical[c.lower()] for c in statements.columns if c.lower() in canonical})
 EVENT_COLUMNS = ["code", "disclosed_at", "doc_type", "fy_end", "kind", "metric", "before", "after", "change",
                  "category", "label"]
 
@@ -68,24 +89,31 @@ def _find(known: dict, fy_end: str | None) -> str | None:
     return None
 
 
-def _values(row, columns: list[str]) -> dict:
-    return {label: row.get(col, np.nan) for col, label in zip(columns, [m[3] for m in METRICS])}
+def _values(row, role: str) -> dict:
+    """1つの書類から、実績・今期予想・来期予想のどれかを {表示名: 値} で取り出す。
+    連結の数字が1つでもあれば連結を、なければ非連結を使う（連結と非連結を混ぜて比べないため）。"""
+    i = ROLES[role]
+    consolidated = {m[3]: row.get(m[i], np.nan) for m in METRICS}
+    if any(not np.isnan(v) for v in consolidated.values()):
+        return consolidated
+    return {m[3]: row.get(_non_consolidated(m[i]), np.nan) for m in METRICS}
 
 
 def guidance_events(statements: pd.DataFrame) -> pd.DataFrame:
     """決算データから出来事を取り出す（1行1件）。"""
-    has_next_year = any(m[2] in statements.columns for m in METRICS)
+    statements = normalize_columns(statements)
+    has_next_year = any(name in statements.columns for m in METRICS for name in (m[2], _non_consolidated(m[2])))
     events = []
     for code, g in statements.groupby("code", sort=False):
         known: dict[str, dict] = {}   # 決算期の終わりの日 → その時点で一番新しい会社予想
         for row in g.to_dict("records"):
             fy_end = _text(row.get("CurFYEn"))
-            forecast = _values(row, [m[1] for m in METRICS])
+            forecast = _values(row, "forecast")
             has_forecast = any(not np.isnan(v) for v in forecast.values())
             base = {"code": code, "disclosed_at": row["disclosed_at"], "doc_type": row.get("DocType", ""), "fy_end": fy_end}
 
             if row.get("CurPerType") == "FY" and "FinancialStatements" in str(row.get("DocType", "")):
-                actual = _values(row, [m[0] for m in METRICS])
+                actual = _values(row, "actual")
                 key = _find(known, fy_end)
                 if key and (cmp := _compare(known[key], actual)):
                     name, b, a = cmp
@@ -94,7 +122,7 @@ def guidance_events(statements: pd.DataFrame) -> pd.DataFrame:
                                    "change": a / b - 1, "category": f"fy_surprise_{category}", "label": label})
                 # 来期予想: NxF〜 の項目があればそれ、なければ F〜 の項目
                 # （本決算の時点で今期は終わっているので、F〜 に入っているのは来期の予想とみなす）
-                next_forecast = _values(row, [m[2] for m in METRICS]) if has_next_year else forecast
+                next_forecast = _values(row, "next") if has_next_year else forecast
                 next_end = _text(row.get("NxFYEn")) or (
                     str(pd.Timestamp(fy_end) + pd.DateOffset(years=1))[:10] if fy_end else None)
                 if next_end:
