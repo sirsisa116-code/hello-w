@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from kabu.analysis.valuation import format_valuation
 from kabu.quality import QualityLog
 from kabu.scoring import CATEGORY_LABELS, CategoryScore
 
@@ -101,13 +102,14 @@ def build_report(
         lines.append("ランキングに入った銘柄はありません。")
     else:
         lines += [
-            "| 順位 | コード | 銘柄 | 総合 | 終値 | 前日比 | 主なプラス要因 |",
-            "|---:|---|---|---:|---:|---:|---|",
+            "| 順位 | コード | 銘柄 | 総合 | 終値 | 前日比 | 予想PER | PBR | 主なプラス要因 |",
+            "|---:|---|---|---:|---:|---:|---:|---:|---|",
         ]
-        for r in ranking.head(top_n).itertuples(index=False):
+        for r in ranking.head(top_n).to_dict("records"):
+            per, pbr, _ = format_valuation(r)
             lines.append(
-                f"| {r.rank} | {r.code} | {r.name} | {r.total_score:.1f} | {r.close:,.0f} | "
-                f"{r.day_change_pct:+.2f}% | {r.plus_reasons or '—'} |"
+                f"| {r['rank']} | {r['code']} | {r['name']} | {r['total_score']:.1f} | {r['close']:,.0f} | "
+                f"{r['day_change_pct']:+.2f}% | {per} | {pbr} | {r['plus_reasons'] or '—'} |"
             )
         lines += tie_notes(ranking, top_n)
 

@@ -23,7 +23,10 @@ from kabu.data.xbrl_figures import FIGURE_COLUMNS, extract_key_figures
 from kabu.quality import QualityLog
 
 SOURCE = "xbrl"
-LOG_COLUMNS = ["id", "code", "pubdate", "title", "status", "message", "fetched_at"]
+LOG_COLUMNS = ["id", "code", "pubdate", "title", "status", "message", "fetched_at", "version"]
+# 取り出す項目を増やしたら上げる。古い版で取り出した開示は、TDnet に残っている間に読み直す
+# 1: 売上・利益・1株利益・配当 / 2: 1株純資産・自己資本・株式数を追加（PBR のため）
+EXTRACT_VERSION = 2
 TARGET_WORDS = ("決算短信", "業績予想", "配当予想")
 
 
@@ -65,15 +68,38 @@ EMPTY_MESSAGE = "主要な数字が見つかりませんでした（項目名が
 
 
 def finished_ids(log: pd.DataFrame) -> set[str]:
-    """もう取りに行かない開示。最後の取得結果が ok で数字が取れたもの、または not_found のもの。
-    ok でも数字を1つも取り出せなかったものは、読み取り方を直したあとに読み直せるよう、
-    TDnet に残っている間（retention_days 以内）は毎回取り直す。"""
+    """もう取りに行かない開示。最後の取得結果が not_found のもの、または今の版（EXTRACT_VERSION）で
+    数字を取り出せた ok のもの。
+    数字を1つも取り出せなかった ok や、古い版で取り出した ok は、読み取り方を直したあとに読み直せるよう、
+    TDnet に残っている間（retention_days 以内）は取り直す。"""
     if log.empty:
         return set()
     last = log.drop_duplicates("id", keep="last")
     message = last["message"].fillna("").astype(str)
-    finished = (last["status"] == "not_found") | ((last["status"] == "ok") & (message != EMPTY_MESSAGE))
-    return set(last.loc[finished, "id"])
+    version = pd.to_numeric(last.get("version", pd.Series(1, index=last.index)), errors="coerce").fillna(1)
+    current_ok = (last["status"] == "ok") & (message != EMPTY_MESSAGE) & (version >= EXTRACT_VERSION)
+    return set(last.loc[(last["status"] == "not_found") | current_ok, "id"])
+
+
+def _upgrade_log(log_path) -> None:
+    """版の列がない古い取得記録に、版1として列を足す（列の並びがずれないよう、書き直す）。"""
+    if log_path.exists():
+        log = pd.read_csv(log_path, dtype={"id": str, "code": str}, encoding="utf-8-sig")
+        if "version" not in log.columns:
+            log["version"] = 1
+            log[LOG_COLUMNS].to_csv(log_path, index=False, encoding="utf-8-sig")
+
+
+def _replace_figures(path, doc_id: str, figures: pd.DataFrame) -> None:
+    """開示1件分の数字を保存する。読み直した開示は、前に保存した分を消してから入れ替える。"""
+    if path.exists():
+        old = pd.read_csv(path, dtype={"id": str, "code": str}, encoding="utf-8-sig", keep_default_na=False,
+                          na_values=[""])
+        if (old["id"] == doc_id).any():
+            pd.concat([old[old["id"] != doc_id], figures], ignore_index=True).to_csv(
+                path, index=False, encoding="utf-8-sig")
+            return
+    _append(path, figures)
 
 
 def fetch_zip(url: str) -> tuple[bytes | None, str, str]:
@@ -110,6 +136,7 @@ def collect_xbrl(
         progress(f"XBRL（決算データ）を {len(targets)} 件取得します（{conf['pause_seconds']}秒間隔）…")
 
     figures_path, log_path = _paths(settings)
+    _upgrade_log(log_path)
     saved, errors, not_found, empty_codes = 0, 0, 0, []
     for i, row in enumerate(targets.itertuples(index=False), 1):
         if i > 1:
@@ -124,7 +151,7 @@ def collect_xbrl(
                 figures.insert(0, "id", row.id)
                 figures.insert(1, "code", row.code)
                 figures.insert(2, "pubdate", row.pubdate)
-                _append(figures_path, figures)
+                _replace_figures(figures_path, row.id, figures)
                 saved += 1
                 if figures.empty:
                     message = EMPTY_MESSAGE
@@ -133,7 +160,8 @@ def collect_xbrl(
         not_found += status == "not_found"
         _append(log_path, pd.DataFrame([{
             "id": row.id, "code": row.code, "pubdate": row.pubdate, "title": row.title, "status": status,
-            "message": message, "fetched_at": datetime.now().isoformat(timespec="seconds")}], columns=LOG_COLUMNS))
+            "message": message, "fetched_at": datetime.now().isoformat(timespec="seconds"),
+            "version": EXTRACT_VERSION}], columns=LOG_COLUMNS))
         if len(targets) > 5 and (i % 50 == 0 or i == len(targets)):
             progress(f"  {i} / {len(targets)} 件 処理済み")
 

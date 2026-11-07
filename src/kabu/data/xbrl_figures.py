@@ -28,10 +28,16 @@ ITEMS = {
                    "NetIncomeAttributableToOwnersOfParentUS", "NetIncome"],   # NetIncome は非連結の会社
     "eps": ["NetIncomePerShare", "BasicEarningsPerShareIFRS", "BasicNetIncomePerShareUS"],
     "dividend_per_share": ["DividendPerShare"],
+    # PER・PBR の計算用（1株あたり純資産は、直接の値がなければ 純資産 ÷（発行済株式数 − 自己株式数）で出す）
+    "bps": ["NetAssetsPerShare", "EquityAttributableToOwnersOfParentPerShareIFRS"],
+    "equity": ["OwnersEquity", "EquityAttributableToOwnersOfParentIFRS"],
+    "shares_issued": ["NumberOfIssuedAndOutstandingSharesAtTheEndOfFiscalYearIncludingTreasuryStock"],
+    "treasury_shares": ["NumberOfTreasuryStockAtTheEndOfFiscalYear"],
 }
 NAME_TO_ITEM = {name: item for item, names in ITEMS.items() for name in names}
 ITEM_LABELS = {"revenue": "売上", "operating_income": "営業利益", "ordinary_income": "経常利益",
-               "pretax_income": "税引前利益", "net_income": "純利益", "eps": "1株利益", "dividend_per_share": "1株配当"}
+               "pretax_income": "税引前利益", "net_income": "純利益", "eps": "1株利益", "dividend_per_share": "1株配当",
+               "bps": "1株純資産", "equity": "自己資本", "shares_issued": "発行済株式数", "treasury_shares": "自己株式数"}
 
 KINDS = {"ResultMember": "result", "ForecastMember": "forecast", "UpperMember": "upper", "LowerMember": "lower"}
 STAGES = {"PreviousMember": "previous", "CurrentMember": "current"}

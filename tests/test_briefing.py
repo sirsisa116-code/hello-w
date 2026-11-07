@@ -70,7 +70,7 @@ def test_sections_render():
     ])
     mine = "\n".join(my_stocks_section({"9059": "保有中"}, indicators, names, classified, FIGURES,
                                        pd.Timestamp("2026-11-05")))
-    assert "| 9059 | カンダ | 保有中 | 1,500 | +1.20% | 上昇配列" in mine and "進捗率 49%" in mine
+    assert "| 9059 | カンダ | 保有中 | 1,500 | +1.20% | — | — | — | 上昇配列" in mine and "進捗率 49%" in mine
     new = "\n".join(new_disclosures_section(classified, FIGURES, names, pd.Timestamp("2026-11-04 15:00"),
                                             {"9059", "7203"}))
     assert "### 業績予想の修正（1件）" in new and "### 決算発表（1件）" in new

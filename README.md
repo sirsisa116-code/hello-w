@@ -74,7 +74,7 @@ notepad config\local\my_stocks.yaml
 
 | ファイル | 中身 |
 |---|---|
-| `output/daily/基準日_report.md` | 読むためのレポート。注目銘柄、新しい開示（決算・業績修正は中身つき）、目立った値動き、参考のランキング |
+| `output/daily/基準日_report.md` | 読むためのレポート。注目銘柄（予想PER・PBR・予想配当利回りつき）、新しい開示（決算・業績修正は中身つき）、目立った値動き、参考のランキング |
 | `output/daily/基準日_ranking.csv` | 全銘柄の点数と指標の値 |
 | `output/history.csv` | 毎日のランキングを全部つなげたもの（事後検証で使う） |
 | `output/daily/実行日_prices_status.csv` | 銘柄ごとの最新日付・終値・データ件数・取得元 |

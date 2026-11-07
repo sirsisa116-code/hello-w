@@ -160,13 +160,35 @@ def test_non_consolidated_summary():
     assert figures.loc["operating_income", "consolidated"] == "個別"
 
 
-def test_empty_results_are_retried():
+def test_empty_or_old_results_are_retried():
+    v = store.EXTRACT_VERSION
     log = pd.DataFrame([
-        {"id": "1", "status": "ok", "message": ""},
-        {"id": "2", "status": "ok", "message": store.EMPTY_MESSAGE},
-        {"id": "3", "status": "not_found", "message": "x"},
-        {"id": "4", "status": "error", "message": "x"},
-        {"id": "5", "status": "ok", "message": store.EMPTY_MESSAGE},
-        {"id": "5", "status": "ok", "message": ""},          # 読み直して数字が取れた
+        {"id": "1", "status": "ok", "message": "", "version": v},
+        {"id": "2", "status": "ok", "message": store.EMPTY_MESSAGE, "version": v},
+        {"id": "3", "status": "not_found", "message": "x", "version": v},
+        {"id": "4", "status": "error", "message": "x", "version": v},
+        {"id": "5", "status": "ok", "message": store.EMPTY_MESSAGE, "version": v},
+        {"id": "5", "status": "ok", "message": "", "version": v},          # 読み直して数字が取れた
+        {"id": "6", "status": "ok", "message": "", "version": v - 1},      # 古い版で取り出した → 読み直す
     ])
     assert store.finished_ids(log) == {"1", "3", "5"}
+    # 版の列がない古い記録は、すべて版1とみなす
+    assert store.finished_ids(log.drop(columns="version")) == {"3"}
+
+
+def test_refetched_figures_replace_old_rows(tmp_path):
+    path = tmp_path / "key_figures.csv"
+    first = pd.DataFrame([{"id": "A", "code": "1111", "item": "eps", "value": 1.0},
+                          {"id": "B", "code": "2222", "item": "eps", "value": 2.0}])
+    store._append(path, first)
+    store._replace_figures(path, "A", pd.DataFrame([{"id": "A", "code": "1111", "item": "bps", "value": 9.0}]))
+    saved = pd.read_csv(path, dtype={"id": str}, encoding="utf-8-sig")
+    assert sorted(zip(saved["id"], saved["item"])) == [("A", "bps"), ("B", "eps")]
+
+
+def test_old_log_gets_version_column(tmp_path):
+    path = tmp_path / "fetch_log.csv"
+    pd.DataFrame([{"id": "1", "code": "1", "pubdate": "x", "title": "t", "status": "ok", "message": "",
+                   "fetched_at": "x"}]).to_csv(path, index=False, encoding="utf-8-sig")
+    store._upgrade_log(path)
+    assert pd.read_csv(path, encoding="utf-8-sig")["version"].tolist() == [1]

@@ -30,12 +30,25 @@ from kabu.data.universe import build_universe, load_jpx_list, universe_label  # 
 from kabu.analysis.technical import compute_indicator_series, indicators_at  # noqa: E402
 from kabu.briefing import load_my_stocks, movers_section, my_stocks_section, new_disclosures_section  # noqa: E402
 from kabu.data.xbrl_store import load_key_figures  # noqa: E402
+from kabu.analysis.valuation import compute_valuation, jquants_inputs, latest_inputs, xbrl_inputs  # noqa: E402
+from kabu.data.jquants_statements import load_statements  # noqa: E402
 from kabu.quality import QualityLog  # noqa: E402
 from kabu.report import append_history, build_report, save_ranking_csv, save_report  # noqa: E402
 from kabu.scoring import load_weights, rank_stocks  # noqa: E402
 
 
-def build_briefing(settings, quality, universe, ranking, prices, my_stocks, classified, data_date) -> list[str]:
+def build_valuation(settings, prices, data_date) -> pd.DataFrame:
+    """予想PER・PBR・予想配当利回り。XBRL（新しい）と J-Quants（12週間遅れ）のうち、新しいほうの数字を使う。"""
+    closes = pd.Series({c: df.loc[df.index <= data_date, "close"].iloc[-1]
+                        for c, df in prices.items() if (df.index <= data_date).any()})
+    statements = load_statements(list(closes.index), settings)
+    inputs = latest_inputs(xbrl_inputs(load_key_figures(settings)),
+                           jquants_inputs(statements) if not statements.empty else None)
+    return compute_valuation(inputs, closes)
+
+
+def build_briefing(settings, quality, universe, ranking, prices, my_stocks, classified, data_date,
+                   valuation) -> list[str]:
     """レポートの「材料の整理」の欄を作る。"""
     jpx = load_jpx_list(settings, quality)
     names = dict(zip(jpx["code"], jpx["name"])) if jpx is not None else {}
@@ -45,7 +58,12 @@ def build_briefing(settings, quality, universe, ranking, prices, my_stocks, clas
     extra = {c: indicators_at(compute_indicator_series(prices[c]), data_date)
              for c in my_stocks if c in prices and c not in indicators.index}
     if extra:
-        indicators = pd.concat([indicators, pd.DataFrame.from_dict(extra, orient="index")])
+        extra_df = pd.DataFrame.from_dict(extra, orient="index")
+        if not valuation.empty:
+            extra_df = extra_df.join(valuation[["per_forecast", "per_note", "pbr", "dividend_yield"]])
+        indicators = pd.concat([indicators, extra_df])
+    if not valuation.empty and "per_note" not in indicators.columns:
+        indicators = indicators.join(valuation[["per_note"]])
     figures = load_key_figures(settings)
     if classified is None:
         classified = pd.DataFrame(columns=["id", "pubdate", "code", "company_name", "title", "category", "label"])
@@ -113,13 +131,18 @@ def main() -> int:
                   "（これより後に出た今日の開示は、次回のランキングに入ります）")
         ranking, details, excluded = rank_stocks(universe, stock_prices, data_date, weights, quality,
                                                  disclosure_events=events, disclosure_failed=failed)
+        valuation = build_valuation(settings, stock_prices, data_date)
+        if not ranking.empty and not valuation.empty:
+            ranking = ranking.merge(valuation[["per_forecast", "pbr", "dividend_yield", "eps_date", "bps_date"]].round(2),
+                                    left_on="code", right_index=True, how="left")
 
         stamp = data_date.strftime("%Y-%m-%d")
         save_ranking_csv(ranking, out_dir / f"{stamp}_ranking.csv")
         if not ranking.empty:
             append_history(ranking, resolve_path(settings["paths"]["history"]), data_date, now, weights["version"],
                            universe_label(settings))
-        briefing = build_briefing(settings, quality, universe, ranking, stock_prices, my_stocks, classified, data_date)
+        briefing = build_briefing(settings, quality, universe, ranking, stock_prices, my_stocks, classified, data_date,
+                                  valuation)
         text = build_report(ranking, details, excluded, quality, data_date, now, weights, settings["report"]["top_n"],
                             briefing)
         report_path = out_dir / f"{stamp}_report.md"

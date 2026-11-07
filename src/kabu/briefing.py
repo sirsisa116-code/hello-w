@@ -15,9 +15,13 @@ import pandas as pd
 import yaml
 
 from kabu.analysis.earnings_brief import earnings_brief
+from kabu.analysis.valuation import format_valuation
 from kabu.config import resolve_path
 
 MY_STOCKS_FILE = "config/local/my_stocks.yaml"
+VALUATION_NOTE = ("予想PER・予想配当利回りは会社予想、PBR は直近の決算の純資産から計算（TDnet の XBRL と J-Quants の"
+                  "新しいほう。J-Quants は最大3か月ほど古い）。元にした開示の日付はランキングの CSV に記録しています。"
+                  "開示のあとに株式分割があった銘柄は、分割の比率だけずれます。")
 RECENT_DAYS = 14
 MAX_ROWS = 30
 
@@ -58,22 +62,25 @@ def my_stocks_section(my_stocks: dict[str, str], indicators: pd.DataFrame, names
     if not my_stocks:
         return ["## 自分の注目銘柄", "",
                 f"まだ登録されていません。`{MY_STOCKS_FILE}` に銘柄コードを書くと、ここに表示されます。", ""]
-    lines = ["## 自分の注目銘柄", "", "| コード | 銘柄 | メモ | 終値 | 前日比 | トレンド |", "|---|---|---|---:|---:|---|"]
+    lines = ["## 自分の注目銘柄", "",
+             "| コード | 銘柄 | メモ | 終値 | 前日比 | 予想PER | PBR | 予想配当利回り | トレンド |",
+             "|---|---|---|---:|---:|---:|---:|---:|---|"]
     since = reference - pd.Timedelta(days=RECENT_DAYS)
     news = []
     for code, memo in my_stocks.items():
         name = names.get(code, "")
         if code in indicators.index:
             r = indicators.loc[code]
+            per, pbr, dy = format_valuation(r)
             lines.append(f"| {code} | {name} | {memo} | {r['close']:,.0f} | {_fmt_change(r['day_change_pct'])} | "
-                         f"{_trend_text(r)} |")
+                         f"{per} | {pbr} | {dy} | {_trend_text(r)} |")
         else:
-            lines.append(f"| {code} | {name} | {memo} | — | — | 株価を取れませんでした |")
+            lines.append(f"| {code} | {name} | {memo} | — | — | — | — | — | 株価を取れませんでした |")
         recent = classified[(classified["code"] == code) & (classified["pubdate"] >= since)]
         for d in recent.drop_duplicates("id").itertuples(index=False):
             brief, _ = earnings_brief(figures[figures["code"] == code], d.id) if not figures.empty else ("", None)
             news.append(f"- {code} {name} {d.pubdate:%m/%d %H:%M} {d.title}" + (f" — {brief}" if brief else ""))
-    lines += ["", f"直近{RECENT_DAYS}日の開示:", ""] + (news or ["- ありません"]) + [""]
+    lines += ["", VALUATION_NOTE, "", f"直近{RECENT_DAYS}日の開示:", ""] + (news or ["- ありません"]) + [""]
     return lines
 
 
