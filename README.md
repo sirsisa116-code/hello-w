@@ -39,11 +39,23 @@ python scripts/run_daily.py
 TDnet は資料を約1か月しか置いておかないので、**1か月以上あけずに実行してください**。あいた分は二度と取れません。
 初回は1か月分をまとめて取るので、決算発表の時期だと20分ほどかかることがあります。それより前に実行すると、当日の株価は未確定として除外されます。
 
+## 自分の保有・注目銘柄を登録する
+
+`config\my_stocks.example.yaml` をコピーして `config\local\my_stocks.yaml` という名前で保存し、自分の銘柄コードを書いてください。
+毎日のレポートの最初に、その銘柄の株価・トレンド・直近14日の開示がまとめて表示されます。
+`config\local\` は GitHub に上がらないので、保有銘柄が外に出ることはありません。
+
+```powershell
+mkdir config\local -Force
+copy config\my_stocks.example.yaml config\local\my_stocks.yaml
+notepad config\local\my_stocks.yaml
+```
+
 ## 出力されるもの
 
 | ファイル | 中身 |
 |---|---|
-| `output/daily/基準日_report.md` | 読むためのレポート。上位銘柄と、それぞれの点数の根拠 |
+| `output/daily/基準日_report.md` | 読むためのレポート。注目銘柄、新しい開示（決算・業績修正は中身つき）、目立った値動き、参考のランキング |
 | `output/daily/基準日_ranking.csv` | 全銘柄の点数と指標の値 |
 | `output/history.csv` | 毎日のランキングを全部つなげたもの（事後検証で使う） |
 | `output/daily/実行日_prices_status.csv` | 銘柄ごとの最新日付・終値・データ件数・取得元 |

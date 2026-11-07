@@ -17,6 +17,8 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
+import pandas as pd
+
 # src フォルダの中の kabu を import できるようにする
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -24,10 +26,38 @@ from kabu.config import load_settings, now_jst, resolve_path  # noqa: E402
 from kabu.data.disclosures import prepare_disclosure_events  # noqa: E402
 from kabu.data.prices import update_prices  # noqa: E402
 from kabu.data.xbrl_store import collect_xbrl, revision_details  # noqa: E402
-from kabu.data.universe import build_universe, universe_label  # noqa: E402
+from kabu.data.universe import build_universe, load_jpx_list, universe_label  # noqa: E402
+from kabu.analysis.technical import compute_indicator_series, indicators_at  # noqa: E402
+from kabu.briefing import load_my_stocks, movers_section, my_stocks_section, new_disclosures_section  # noqa: E402
+from kabu.data.xbrl_store import load_key_figures  # noqa: E402
 from kabu.quality import QualityLog  # noqa: E402
 from kabu.report import append_history, build_report, save_ranking_csv, save_report  # noqa: E402
 from kabu.scoring import load_weights, rank_stocks  # noqa: E402
+
+
+def build_briefing(settings, quality, universe, ranking, prices, my_stocks, classified, data_date) -> list[str]:
+    """レポートの「材料の整理」の欄を作る。"""
+    jpx = load_jpx_list(settings, quality)
+    names = dict(zip(jpx["code"], jpx["name"])) if jpx is not None else {}
+    names |= dict(zip(universe["code"], universe["name"]))
+    indicators = ranking.set_index("code") if not ranking.empty else pd.DataFrame()
+    # 注目銘柄のうちランキングに入っていないもの（対象外の銘柄など）は、ここで指標を計算する
+    extra = {c: indicators_at(compute_indicator_series(prices[c]), data_date)
+             for c in my_stocks if c in prices and c not in indicators.index}
+    if extra:
+        indicators = pd.concat([indicators, pd.DataFrame.from_dict(extra, orient="index")])
+    figures = load_key_figures(settings)
+    if classified is None:
+        classified = pd.DataFrame(columns=["id", "pubdate", "code", "company_name", "title", "category", "label"])
+    # 「新しい開示」は前の営業日の15時以降（前回のレポートと少し重なるが、抜けは出ない）
+    calendar = max((df.index for df in prices.values()), key=len) if prices else pd.DatetimeIndex([data_date])
+    earlier = calendar[calendar < data_date]
+    since = (earlier[-1] if len(earlier) else data_date - pd.Timedelta(days=1)) + pd.Timedelta(hours=15)
+    lines = my_stocks_section(my_stocks, indicators, names, classified, figures, data_date)
+    lines += new_disclosures_section(classified, figures, names, since, set(universe["code"]) | set(my_stocks))
+    if not indicators.empty:
+        lines += movers_section(indicators[indicators.index.isin(universe["code"])], names)
+    return lines
 
 
 def main() -> int:
@@ -44,8 +74,12 @@ def main() -> int:
     universe = build_universe(settings, quality)
     print(f"対象銘柄: {len(universe)} 銘柄（モード: {settings['universe']['mode']}）")
 
+    # 自分の注目銘柄（config/local/my_stocks.yaml）は、対象銘柄に入っていなくても株価と開示を取る
+    my_stocks = load_my_stocks()
+    if my_stocks:
+        print(f"自分の注目銘柄: {len(my_stocks)} 銘柄")
     benchmark = settings["benchmark"]["code"]
-    codes = list(universe["code"]) + [benchmark]
+    codes = list(dict.fromkeys(list(universe["code"]) + list(my_stocks) + [benchmark]))
     print("株価を取得しています…")
     prices, status = update_prices(codes, settings, quality, now)
 
@@ -62,15 +96,16 @@ def main() -> int:
         data_date = max(df.index[-1] for df in prices.values())
         print(f"データ基準日: {data_date:%Y-%m-%d}。点数を計算しています…")
         stock_prices = {c: df for c, df in prices.items() if c != benchmark}
-        events, failed = None, None
+        events, failed, classified = None, None, None
         if weights["category_weights"].get("disclosure", 0) > 0:
             decay = weights["disclosure"]["decay_days"]
             start = (data_date - timedelta(days=decay + 2)).date()
             # XBRL は TDnet から約1か月で消えるので、毎回まだ取っていない分を取って保存しておく
-            saved = collect_xbrl(settings, set(universe["code"]), quality, now.date())
+            saved = collect_xbrl(settings, set(universe["code"]) | set(my_stocks), quality, now.date())
             if saved:
                 print(f"XBRL（決算データ）を {saved} 件保存しました")
-            events, failed, _ = prepare_disclosure_events(start, now.date(), settings, weights["disclosure"], quality, now.date())
+            events, failed, classified = prepare_disclosure_events(start, now.date(), settings, weights["disclosure"],
+                                                                   quality, now.date())
             details = revision_details(settings)
             for df in events.values():
                 df["detail"] = df["id"].map(details)
@@ -84,7 +119,9 @@ def main() -> int:
         if not ranking.empty:
             append_history(ranking, resolve_path(settings["paths"]["history"]), data_date, now, weights["version"],
                            universe_label(settings))
-        text = build_report(ranking, details, excluded, quality, data_date, now, weights, settings["report"]["top_n"])
+        briefing = build_briefing(settings, quality, universe, ranking, stock_prices, my_stocks, classified, data_date)
+        text = build_report(ranking, details, excluded, quality, data_date, now, weights, settings["report"]["top_n"],
+                            briefing)
         report_path = out_dir / f"{stamp}_report.md"
         save_report(text, report_path)
         print(f"ランキング入り: {len(ranking)} 銘柄 / 除外: {len(excluded)} 銘柄")

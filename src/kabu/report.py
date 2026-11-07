@@ -63,12 +63,15 @@ def build_report(
     run_at: datetime,
     weights: dict,
     top_n: int,
+    briefing: list[str] | None = None,
 ) -> str:
+    """briefing（材料の整理の欄。briefing.py で作る）を渡すと、データの問題のあとに入れ、
+    ランキングは最後に「参考」として置く。"""
     used = [CATEGORY_LABELS[k] + f"（重み {w}）" for k, w in weights["category_weights"].items() if w and w > 0]
     unused = [CATEGORY_LABELS[k] for k, w in weights["category_weights"].items() if not w or w <= 0]
 
     lines = [
-        f"# 買い候補ランキング {_fmt_date(data_date)}",
+        f"# 日次レポート {_fmt_date(data_date)}",
         "",
         f"- データ基準日: {_fmt_date(data_date)} の終値まで",
         f"- 実行日時: {run_at:%Y-%m-%d %H:%M}",
@@ -88,7 +91,12 @@ def build_report(
     else:
         lines.append("問題はありません。")
 
-    lines += ["", f"## ランキング（上位 {min(top_n, len(ranking))}）", ""]
+    lines.append("")
+    if briefing:
+        lines += briefing
+    lines += [f"## 参考: 機械的なランキング（上位 {min(top_n, len(ranking))}）", "",
+              "> これまでの検証（後付けの再現・約500銘柄・1年）では、この点数に値動きを予測する力は確認できていません。"
+              "トレンドや開示の状態を一覧で見るためのものとして扱ってください。", ""]
     if ranking.empty:
         lines.append("ランキングに入った銘柄はありません。")
     else:
@@ -131,8 +139,8 @@ def build_report(
 
     lines += [
         "---",
-        "このランキングは機械的なルールで付けた点数で、売買を勧めるものではありません。",
-        "点数ルールの効果は未検証です。",
+        "このレポートは判断の材料を整理したもので、売買を勧めるものではありません。",
+        "ランキングの点数に予測する力は確認できていません。",
     ]
     return "\n".join(lines) + "\n"
 
