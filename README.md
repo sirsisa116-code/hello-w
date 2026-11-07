@@ -39,6 +39,25 @@ python scripts/run_daily.py
 TDnet は資料を約1か月しか置いておかないので、**1か月以上あけずに実行してください**。あいた分は二度と取れません。
 初回は1か月分をまとめて取るので、決算発表の時期だと20分ほどかかることがあります。それより前に実行すると、当日の株価は未確定として除外されます。
 
+## 平日の夕方に自動で実行する（タスク スケジューラ）
+
+`scripts\run_daily_task.bat` を Windows のタスク スケジューラに登録すると、平日18:30に自動で `run_daily.py` が動きます。
+実行の記録は `output\logs\run_daily_日時.log` に残ります。PowerShell で次を実行すると登録できます（管理者権限は不要）。
+
+```powershell
+$bat = "C:\Users\sirsi\kabu\hello-w\scripts\run_daily_task.bat"
+$action = New-ScheduledTaskAction -Execute $bat
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 18:30
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+Register-ScheduledTask -TaskName "kabu_run_daily" -Action $action -Trigger $trigger -Settings $settings
+```
+
+- 試しに今すぐ動かす: `Start-ScheduledTask -TaskName "kabu_run_daily"`
+- 前回の結果を見る: `Get-ScheduledTaskInfo -TaskName "kabu_run_daily"`（LastTaskResult が 0 なら成功）
+- 登録をやめる: `Unregister-ScheduledTask -TaskName "kabu_run_daily" -Confirm:$false`
+
+自動実行では `git pull` はしません。更新は手で行ってください。
+
 ## 自分の保有・注目銘柄を登録する
 
 `config\my_stocks.example.yaml` をコピーして `config\local\my_stocks.yaml` という名前で保存し、自分の銘柄コードを書いてください。
